@@ -90,6 +90,32 @@ class TestVPSRecordModel(unittest.TestCase):
             with session_scope() as s:
                 s.add(VPSRecord.from_form(ip="9.9.9.9", username="root", password="y", port=22))
 
+    def test_provider_domain_defaults_to_empty_string(self):
+        """未传 provider_domain 时落库为空串，不影响其它字段。"""
+        with session_scope() as s:
+            s.add(VPSRecord.from_form(
+                ip="100.100.100.200", username="root", password="x", port=22
+            ))
+
+        with session_scope() as s:
+            rec = s.query(VPSRecord).filter_by(ip="100.100.100.200").one()
+            self.assertEqual(rec.provider_domain, "")
+
+    def test_provider_domain_persisted_when_provided(self):
+        """传入 provider_domain 时按原样落库，业务可按域名分组查询。"""
+        with session_scope() as s:
+            s.add(VPSRecord.from_form(
+                ip="100.100.100.201",
+                username="root",
+                password="x",
+                port=22,
+                provider_domain="linode.com",
+            ))
+
+        with session_scope() as s:
+            rec = s.query(VPSRecord).filter_by(ip="100.100.100.201").one()
+            self.assertEqual(rec.provider_domain, "linode.com")
+
     def test_new_record_defaults_xray_fields(self):
         """新建 VPSRecord 记录默认 xray_status='not_installed'，其他 xray 字段为空/None。"""
         with session_scope() as s:

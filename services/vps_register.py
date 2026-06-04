@@ -32,6 +32,7 @@ def register_vps(
     password: str,
     port: int = 22,
     expire_date: date | None = None,
+    provider_domain: str = "",
 ) -> dict:
     """注册一台 VPS + 顺手装好 xray + 启用服务。
 
@@ -40,8 +41,14 @@ def register_vps(
         ok_xray_partial - 注册成功但 xray 部分失败（看 xray_status 字段）
         duplicate      - 该 IP 已在表中
         auth_failed / timeout / refused / failed - SSH 连接失败
+
+    provider_domain：服务商控制台域名（如 aliyun.com / linode.com），
+    用于后续按服务商维度做续费提醒；未提供时存空字符串，不影响主流程。
     """
-    logger.info("register_vps 开始 ip=%s user=%s port=%s", ip, username, port)
+    logger.info(
+        "register_vps 开始 ip=%s user=%s port=%s provider=%s",
+        ip, username, port, provider_domain or "(none)",
+    )
 
     # ① 查重
     with session_scope() as session:
@@ -76,6 +83,7 @@ def register_vps(
             os_name=info["os_name"],
             os_version=info["os_version"],
             expire_date=expire_date,
+            provider_domain=provider_domain,
         )
         session.add(record)
 

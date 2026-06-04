@@ -80,6 +80,7 @@ class VPSRecord(Base):
         os_name: str = "",
         os_version: str = "",
         expire_date: date | None = None,
+        provider_domain: str = "",
     ) -> "VPSRecord":
         """从表单/入参构造 VPS 记录，密码在这里完成加密。"""
         from core.security import encrypt_password
@@ -91,6 +92,7 @@ class VPSRecord(Base):
             os_name=os_name,
             os_version=os_version,
             expire_date=expire_date,
+            provider_domain=provider_domain,
         )
 
     def __repr__(self) -> str:

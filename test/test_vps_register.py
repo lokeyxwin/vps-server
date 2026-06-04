@@ -131,6 +131,39 @@ class TestRegisterVpsMocked(unittest.TestCase):
 
     @patch("services.vps_register.install_xray_on_vps")
     @patch("services.vps_register.VPSSession")
+    def test_provider_domain_persisted_through_register(self, mock_vps_cls, mock_install):
+        """provider_domain 参数应一路透传到 DB，验证不被业务层丢弃。"""
+        self._stub_vps_with_info(mock_vps_cls)
+        self._stub_install_xray_result(mock_install, status="ok", ip="1.1.1.5")
+
+        result = register_vps(
+            ip="1.1.1.5",
+            username="root",
+            password="x",
+            port=22,
+            provider_domain="linode.com",
+        )
+
+        self.assertEqual(result["status"], "ok")
+        with session_scope() as s:
+            rec = s.query(VPSRecord).filter_by(ip="1.1.1.5").one()
+            self.assertEqual(rec.provider_domain, "linode.com")
+
+    @patch("services.vps_register.install_xray_on_vps")
+    @patch("services.vps_register.VPSSession")
+    def test_provider_domain_omitted_falls_back_to_empty(self, mock_vps_cls, mock_install):
+        """未传 provider_domain 时 DB 里应为空串，不污染既有用法。"""
+        self._stub_vps_with_info(mock_vps_cls)
+        self._stub_install_xray_result(mock_install, status="ok", ip="1.1.1.6")
+
+        register_vps(ip="1.1.1.6", username="root", password="x", port=22)
+
+        with session_scope() as s:
+            rec = s.query(VPSRecord).filter_by(ip="1.1.1.6").one()
+            self.assertEqual(rec.provider_domain, "")
+
+    @patch("services.vps_register.install_xray_on_vps")
+    @patch("services.vps_register.VPSSession")
     def test_imported_xray_path_also_returns_ok(self, mock_vps_cls, mock_install):
         """xray 在服务器上已装的场景，业务整体仍是 ok。"""
         self._stub_vps_with_info(mock_vps_cls)
