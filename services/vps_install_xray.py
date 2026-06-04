@@ -5,6 +5,7 @@
 
 from datetime import datetime
 
+import config
 from db import VPSRecord, XrayStatus, session_scope
 from log import get_logger
 from core import (
@@ -24,9 +25,9 @@ from xray import (
 )
 
 
-# 防火墙开放范围：18440（VPS 自身代理）+ 18441-18450（Proxy 业务）
-FIREWALL_OPEN_START = 18440
-FIREWALL_OPEN_END = 18450
+# 防火墙开放范围从 config 取（XRAY_DEFAULT_PORT 18440 + PROXY 业务范围 18441-18450）
+FIREWALL_OPEN_START = config.FIREWALL_OPEN_START
+FIREWALL_OPEN_END = config.FIREWALL_OPEN_END
 
 
 logger = get_logger(__name__)
@@ -206,11 +207,11 @@ def _save_failure_with_context(ip: str, manager: XrayManager, exc: XrayError) ->
     partial_installed = False
     try:
         partial_version = manager.get_version()
-    except Exception:
+    except Exception:  # noqa: BLE001 — 失败信息收集是 best-effort
         pass
     try:
         partial_installed = manager.is_installed()
-    except Exception:
+    except Exception:  # noqa: BLE001 — 失败信息收集是 best-effort
         pass
 
     _update_xray_state(

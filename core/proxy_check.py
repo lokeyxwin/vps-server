@@ -8,14 +8,15 @@ from __future__ import annotations
 
 import requests
 
+import config
 from log import get_logger
 
 
 logger = get_logger(__name__)
 
 
-DEFAULT_TEST_URL = "https://api.ipify.org"
-DEFAULT_TIMEOUT = 8
+DEFAULT_TEST_URL = config.CONNECTIVITY_TEST_URL
+DEFAULT_TIMEOUT = config.CONNECTIVITY_TEST_TIMEOUT
 
 EXTERNAL_UNREACHABLE_MESSAGE = (
     "外部到 VPS 的 socks5 代理不通。"
@@ -51,7 +52,7 @@ def test_socks_proxy(
             logger.warning("外部 socks5 不通：%s:%s status=%s",
                            proxy_ip, proxy_port, r.status_code)
         return {"ok": ok, "status_code": r.status_code, "body": body, "error": None}
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — 兜底未分类异常并转换为业务错误
         logger.warning("外部 socks5 测试异常 %s:%s reason=%s",
                        proxy_ip, proxy_port, exc)
         return {

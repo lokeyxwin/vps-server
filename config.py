@@ -65,3 +65,36 @@ DB_POOL_RECYCLE = 3600  # 连接 1 小时后回收（MySQL 默认 8 小时断连
 SSH_CONNECT_TIMEOUT = 10
 SSH_EXECUTE_TIMEOUT = 30
 SSH_DEFAULT_PORT = 22
+
+
+# ============================================================
+# xray 相关常量
+# ============================================================
+
+# VPS 自身代理端口（默认 xray 入站，freedom 直出）
+XRAY_DEFAULT_PORT = 18440
+
+# xray 安装脚本超时（GitHub 拉取，国内可能慢）
+XRAY_INSTALL_TIMEOUT = 120
+
+
+# ============================================================
+# Proxy 业务端口范围
+# ============================================================
+
+# Proxy 业务部署的代理出口端口范围（每台 VPS 最多 10 个出口）
+PROXY_PORT_RANGE_START = 18441
+PROXY_PORT_RANGE_END = 18450
+
+# 服务器本地防火墙开放范围：覆盖 xray 默认端口 + Proxy 业务范围
+FIREWALL_OPEN_START = 18440
+FIREWALL_OPEN_END = 18450
+
+
+# ============================================================
+# 连通性测试
+# ============================================================
+
+# 返回出口 IP 的探测 URL（用于内部 / 外部 socks5 ping）
+CONNECTIVITY_TEST_URL = "https://api.ipify.org"
+CONNECTIVITY_TEST_TIMEOUT = 8

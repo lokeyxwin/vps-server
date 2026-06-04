@@ -3,10 +3,12 @@
 所有领域（vps 业务 / xray / ip / proxy ...）都通过这里跟服务器对话。
 """
 
+import contextlib
 import socket
 
 import paramiko
 
+import config
 from log import get_logger
 
 
@@ -81,7 +83,7 @@ def connect_server(
             port=port,
             username=username,
             password=password,
-            timeout=10,
+            timeout=config.SSH_CONNECT_TIMEOUT,
             allow_agent=False,
             look_for_keys=False,
         )
@@ -99,7 +101,7 @@ def connect_server(
         client.close()
         logger.warning("连接被拒 ip=%s port=%s reason=%s", ip, port, exc)
         raise ConnectRefusedError(CONNECT_REFUSED_MESSAGE) from exc
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — 兜底未分类异常并转换为业务错误
         client.close()
         logger.error("连接失败（未分类） ip=%s port=%s type=%s reason=%s",
                      ip, port, type(exc).__name__, exc)
@@ -107,17 +109,18 @@ def connect_server(
 
 
 def close_server(client: paramiko.SSHClient) -> None:
-    """关闭 SSH 连接。重复调用安全，传入 None 也安全。"""
+    """关闭 SSH 连接。重复调用安全，传入 None 也安全。
+
+    关闭时吞掉异常，避免清理阶段的小问题（已断开、半关闭等）传到上层。
+    """
     if client is None:
         return
-    try:
+    with contextlib.suppress(Exception):
         client.close()
-    except Exception:
-        pass
 
 
 def execute_command(
-    client: paramiko.SSHClient, command: str, timeout: int = 30
+    client: paramiko.SSHClient, command: str, timeout: int = config.SSH_EXECUTE_TIMEOUT
 ) -> dict:
     """执行远程命令。
 
@@ -133,7 +136,7 @@ def execute_command(
         err = stderr.read().decode("utf-8", errors="replace")
         exit_code = stdout.channel.recv_exit_status()
         return {"stdout": out, "stderr": err, "exit_code": exit_code}
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — 兜底未分类异常并转换为业务错误
         raise RuntimeError(EXECUTE_ERROR_MESSAGE) from exc
 
 
@@ -142,7 +145,7 @@ def upload_file(client: paramiko.SSHClient, local_path: str, remote_path: str) -
     try:
         with client.open_sftp() as sftp:
             sftp.put(local_path, remote_path)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — 兜底未分类异常并转换为业务错误
         raise RuntimeError(FILE_TRANSFER_ERROR_MESSAGE) from exc
 
 
@@ -151,7 +154,7 @@ def download_file(client: paramiko.SSHClient, remote_path: str, local_path: str)
     try:
         with client.open_sftp() as sftp:
             sftp.get(remote_path, local_path)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — 兜底未分类异常并转换为业务错误
         raise RuntimeError(FILE_TRANSFER_ERROR_MESSAGE) from exc
 
 
@@ -166,7 +169,7 @@ def _parse_os_release(text: str) -> dict:
 
 
 def get_system_info(client: paramiko.SSHClient) -> dict:
-    """采集系统基础信息。任一字段失败时为空字符串，不抛异常。"""
+    """采集系统基础信息。任意字段获取失败时返回空字符串，不抛异常。"""
     info = {"username": "", "os_name": "", "os_version": ""}
 
     who = execute_command(client, "whoami")

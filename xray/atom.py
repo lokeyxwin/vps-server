@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import paramiko
 
+import config
 from core.ssh import execute_command
 
 
@@ -21,8 +22,8 @@ UNINSTALL_COMMAND = (
     'bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove --purge'
 )
 
-# 安装脚本要从 GitHub 拉取，国内网络可能耗时较长
-INSTALL_TIMEOUT = 120
+# 装机超时（GitHub 拉取，国内可能慢）。从 config 取，方便运维统一调
+INSTALL_TIMEOUT = config.XRAY_INSTALL_TIMEOUT
 
 
 # ============================================================
@@ -30,7 +31,7 @@ INSTALL_TIMEOUT = 120
 # ============================================================
 #
 # 端口分配约定：
-#   18440           ← xray 默认核心配置端口（VPS 自身的 socks 直出）
+#   18440           ← xray 默认核心配置端口（VPS 自身的 socks 直出，配置于 config.XRAY_DEFAULT_PORT）
 #   18441-18450     ← Proxy 业务部署的代理出口（每个 VPS 最多 10 个）
 #
 # 为啥要写默认 config：
@@ -39,22 +40,22 @@ INSTALL_TIMEOUT = 120
 #   写一个最小可用 config 让服务能正常 active，业务后续往里加 inbounds 即可。
 #
 DEFAULT_CONFIG_PATH = "/usr/local/etc/xray/config.json"
-DEFAULT_PORT = 18440
-DEFAULT_CONFIG_JSON = '''{
-  "log": {"loglevel": "warning"},
+DEFAULT_PORT = config.XRAY_DEFAULT_PORT
+DEFAULT_CONFIG_JSON = f'''{{
+  "log": {{"loglevel": "warning"}},
   "inbounds": [
-    {
+    {{
       "tag": "default-direct",
-      "port": 18440,
+      "port": {DEFAULT_PORT},
       "listen": "0.0.0.0",
       "protocol": "socks",
-      "settings": {"auth": "noauth", "udp": true}
-    }
+      "settings": {{"auth": "noauth", "udp": true}}
+    }}
   ],
   "outbounds": [
-    {"protocol": "freedom", "tag": "direct"}
+    {{"protocol": "freedom", "tag": "direct"}}
   ]
-}'''
+}}'''
 
 
 # ============================================================
@@ -225,8 +226,8 @@ def is_config_blank(client: paramiko.SSHClient) -> bool:
 def test_internal_socks(
     client: paramiko.SSHClient,
     port: int = DEFAULT_PORT,
-    test_url: str = "https://api.ipify.org",
-    timeout: int = 8,
+    test_url: str = config.CONNECTIVITY_TEST_URL,
+    timeout: int = config.CONNECTIVITY_TEST_TIMEOUT,
 ) -> dict:
     """在服务器内部测试 xray socks5 是否真的能转发请求。
 
