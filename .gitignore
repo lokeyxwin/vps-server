@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.python-version
+
+# Virtual env
+.venv/
+venv/
+
+# uv
+uv.lock
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# 数据库文件（SQLite 本地）
+db/*.db
+db/*.sqlite
+db/*.sqlite3
+
+# 环境变量
+.env
+.env.local
+
+# 测试
+.pytest_cache/
+.coverage
+htmlcov/
