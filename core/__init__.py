@@ -24,6 +24,13 @@ from core.ssh import (
     FILE_TRANSFER_ERROR_MESSAGE,
 )
 from core.session import VPSSession, NOT_CONNECTED_MESSAGE
+from core.firewall import (
+    open_tcp_port_range,
+    detect_firewall,
+    FirewallOpenError,
+    FIREWALL_OPEN_FAILED_MESSAGE,
+)
+from core.proxy_check import test_socks_proxy, EXTERNAL_UNREACHABLE_MESSAGE
 
 
 __all__ = [
@@ -44,4 +51,10 @@ __all__ = [
     "EXECUTE_ERROR_MESSAGE",
     "FILE_TRANSFER_ERROR_MESSAGE",
     "NOT_CONNECTED_MESSAGE",
+    "open_tcp_port_range",
+    "detect_firewall",
+    "FirewallOpenError",
+    "FIREWALL_OPEN_FAILED_MESSAGE",
+    "test_socks_proxy",
+    "EXTERNAL_UNREACHABLE_MESSAGE",
 ]
