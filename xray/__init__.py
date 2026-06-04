@@ -1,0 +1,75 @@
+"""xray 领域包：xray 二进制 + systemd 管理。"""
+
+from xray.atom import (
+    # 命令模板
+    INSTALL_COMMAND,
+    UNINSTALL_COMMAND,
+    INSTALL_TIMEOUT,
+    # 默认 config 相关
+    DEFAULT_CONFIG_PATH,
+    DEFAULT_PORT,
+    DEFAULT_CONFIG_JSON,
+    # 错误类
+    XrayError,
+    InstallFailedError,
+    UninstallFailedError,
+    VerifyFailedError,
+    ServiceNotActiveError,
+    EnableFailedError,
+    # 错误文案
+    XRAY_INSTALL_FAILED_MESSAGE,
+    XRAY_UNINSTALL_FAILED_MESSAGE,
+    XRAY_VERIFY_FAILED_MESSAGE,
+    XRAY_SERVICE_START_FAILED_MESSAGE,
+    XRAY_SERVICE_NOT_ACTIVE_MESSAGE,
+    XRAY_ENABLE_FAILED_MESSAGE,
+    # 原子函数（业务通常通过 Manager 调，留着方便单测和特殊场景）
+    install,
+    uninstall,
+    start,
+    enable,
+    is_installed,
+    is_service_active,
+    is_service_enabled,
+    get_version,
+    get_config_size,
+    is_config_blank,
+    write_default_config,
+    test_internal_socks,
+)
+from xray.manager import XrayManager
+
+
+__all__ = [
+    "XrayManager",
+    "XrayError",
+    "InstallFailedError",
+    "UninstallFailedError",
+    "VerifyFailedError",
+    "ServiceNotActiveError",
+    "EnableFailedError",
+    "INSTALL_COMMAND",
+    "UNINSTALL_COMMAND",
+    "INSTALL_TIMEOUT",
+    "DEFAULT_CONFIG_PATH",
+    "DEFAULT_PORT",
+    "DEFAULT_CONFIG_JSON",
+    "XRAY_INSTALL_FAILED_MESSAGE",
+    "XRAY_UNINSTALL_FAILED_MESSAGE",
+    "XRAY_VERIFY_FAILED_MESSAGE",
+    "XRAY_SERVICE_START_FAILED_MESSAGE",
+    "XRAY_SERVICE_NOT_ACTIVE_MESSAGE",
+    "XRAY_ENABLE_FAILED_MESSAGE",
+    "install",
+    "uninstall",
+    "start",
+    "enable",
+    "is_installed",
+    "is_service_active",
+    "is_service_enabled",
+    "get_version",
+    "get_config_size",
+    "is_config_blank",
+    "write_default_config",
+    "test_internal_socks",
+]
