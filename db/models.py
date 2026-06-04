@@ -32,6 +32,8 @@ class VPSRecord(Base):
     __tablename__ = "vps_record"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # 服务商控制台域名（如 aliyun.com / racknerd.com），用于续费提醒与服务商维度归类
+    provider_domain: Mapped[str] = mapped_column(String(255), default="", nullable=False)
     ip: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     port: Mapped[int] = mapped_column(Integer, nullable=False, default=22)
     username: Mapped[str] = mapped_column(String(64), nullable=False)
