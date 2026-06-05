@@ -77,7 +77,7 @@ def _stub_xray_manager(
             "was_already_installed": False,
             "actions_taken": ["installed"],
         }
-    xray_instance.get_version.return_value = partial_version
+    xray_instance.version.return_value = partial_version
     xray_instance.is_installed.return_value = partial_is_installed
     # 内部 ping 默认通
     xray_instance.test_internal_socks.return_value = {

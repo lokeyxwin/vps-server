@@ -10,12 +10,18 @@ from xray import (
     install,
     uninstall,
     is_installed,
-    is_service_active,
-    get_version,
+    is_running,
+    version,
+    stop,
+    disable,
     INSTALL_COMMAND,
     UNINSTALL_COMMAND,
     XRAY_INSTALL_FAILED_MESSAGE,
+    XRAY_SERVICE_STOP_FAILED_MESSAGE,
+    XRAY_DISABLE_FAILED_MESSAGE,
     InstallFailedError,
+    StopFailedError,
+    DisableFailedError,
 )
 
 
@@ -68,34 +74,66 @@ class TestXrayMocked(unittest.TestCase):
         self.assertFalse(is_installed(MagicMock()))
 
     @patch("xray.atom.execute_command")
-    def test_is_service_active_true(self, mock_exec):
+    def test_is_running_true(self, mock_exec):
         mock_exec.return_value = {"stdout": "active\n", "stderr": "", "exit_code": 0}
-        self.assertTrue(is_service_active(MagicMock()))
+        self.assertTrue(is_running(MagicMock()))
 
     @patch("xray.atom.execute_command")
-    def test_is_service_active_false_inactive(self, mock_exec):
+    def test_is_running_false_inactive(self, mock_exec):
         mock_exec.return_value = {"stdout": "inactive\n", "stderr": "", "exit_code": 3}
-        self.assertFalse(is_service_active(MagicMock()))
+        self.assertFalse(is_running(MagicMock()))
 
     @patch("xray.atom.execute_command")
-    def test_is_service_active_false_failed(self, mock_exec):
+    def test_is_running_false_failed(self, mock_exec):
         mock_exec.return_value = {"stdout": "failed\n", "stderr": "", "exit_code": 3}
-        self.assertFalse(is_service_active(MagicMock()))
+        self.assertFalse(is_running(MagicMock()))
 
     @patch("xray.atom.execute_command")
-    def test_get_version_returns_string(self, mock_exec):
+    def test_version_returns_string(self, mock_exec):
         # `head -n1` 在服务器上已截到第一行，这里直接 mock 截后的输出
         mock_exec.return_value = {
             "stdout": "Xray 1.8.4 (Xray, Penetrates Everything.)\n",
             "stderr": "", "exit_code": 0,
         }
-        version = get_version(MagicMock())
-        self.assertEqual(version, "Xray 1.8.4 (Xray, Penetrates Everything.)")
+        v = version(MagicMock())
+        self.assertEqual(v, "Xray 1.8.4 (Xray, Penetrates Everything.)")
 
     @patch("xray.atom.execute_command")
-    def test_get_version_returns_empty_when_not_installed(self, mock_exec):
+    def test_version_returns_empty_when_not_installed(self, mock_exec):
         mock_exec.return_value = {"stdout": "", "stderr": "not found", "exit_code": 127}
-        self.assertEqual(get_version(MagicMock()), "")
+        self.assertEqual(version(MagicMock()), "")
+
+    # ---------- stop / disable ----------
+
+    @patch("xray.atom.execute_command")
+    def test_stop_success(self, mock_exec):
+        mock_exec.return_value = {"stdout": "", "stderr": "", "exit_code": 0}
+        stop(MagicMock())
+        mock_exec.assert_called_once_with(unittest.mock.ANY, "systemctl stop xray")
+
+    @patch("xray.atom.execute_command")
+    def test_stop_failure_raises(self, mock_exec):
+        mock_exec.return_value = {
+            "stdout": "", "stderr": "Failed to stop xray.service", "exit_code": 5
+        }
+        with self.assertRaises(StopFailedError) as ctx:
+            stop(MagicMock())
+        self.assertIn(XRAY_SERVICE_STOP_FAILED_MESSAGE, str(ctx.exception))
+
+    @patch("xray.atom.execute_command")
+    def test_disable_success(self, mock_exec):
+        mock_exec.return_value = {"stdout": "Removed /etc/...", "stderr": "", "exit_code": 0}
+        disable(MagicMock())
+        mock_exec.assert_called_once_with(unittest.mock.ANY, "systemctl disable xray")
+
+    @patch("xray.atom.execute_command")
+    def test_disable_failure_raises(self, mock_exec):
+        mock_exec.return_value = {
+            "stdout": "", "stderr": "Failed to disable unit", "exit_code": 5
+        }
+        with self.assertRaises(DisableFailedError) as ctx:
+            disable(MagicMock())
+        self.assertIn(XRAY_DISABLE_FAILED_MESSAGE, str(ctx.exception))
 
 
 if __name__ == "__main__":

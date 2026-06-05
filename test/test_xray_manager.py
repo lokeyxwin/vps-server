@@ -30,8 +30,8 @@ class TestEnsureInstalledAndRunning(unittest.TestCase):
         self.patches = []
         self.atoms = {}
         for name in [
-            "is_installed", "is_service_active", "is_service_enabled",
-            "get_version", "install", "uninstall", "start", "enable",
+            "is_installed", "is_running", "is_enabled",
+            "version", "install", "uninstall", "start", "enable",
             "is_config_blank", "write_default_config",
         ]:
             p = patch(f"xray.manager.atom.{name}")
@@ -39,9 +39,9 @@ class TestEnsureInstalledAndRunning(unittest.TestCase):
             self.patches.append(p)
         # 默认全 happy path
         self.atoms["is_installed"].return_value = True
-        self.atoms["is_service_active"].return_value = True
-        self.atoms["is_service_enabled"].return_value = True
-        self.atoms["get_version"].return_value = "Xray 1.8.4"
+        self.atoms["is_running"].return_value = True
+        self.atoms["is_enabled"].return_value = True
+        self.atoms["version"].return_value = "Xray 1.8.4"
         self.atoms["is_config_blank"].return_value = False
 
     def tearDown(self):
@@ -51,11 +51,11 @@ class TestEnsureInstalledAndRunning(unittest.TestCase):
     def _make_manager(self):
         return XrayManager(MagicMock())
 
-    # ---------- get_version 作为「是否已装」的入口判断 ----------
+    # ---------- version 作为「是否已装」的入口判断 ----------
 
     def test_no_version_triggers_install(self):
-        """get_version 返回空 → 走全新安装路径。"""
-        self.atoms["get_version"].side_effect = [
+        """version 返回空 → 走全新安装路径。"""
+        self.atoms["version"].side_effect = [
             "",                # 第一次：装前查不到
             "Xray 1.8.4",      # 第二次：装完验证 OK
         ]
@@ -65,7 +65,7 @@ class TestEnsureInstalledAndRunning(unittest.TestCase):
         self.assertIn("installed", result["actions_taken"])
 
     def test_has_version_skips_install(self):
-        """get_version 有返回 → 跳过 install。"""
+        """version 有返回 → 跳过 install。"""
         result = self._make_manager().ensure_installed_and_running()
         self.atoms["install"].assert_not_called()
         self.assertTrue(result["was_already_installed"])
@@ -74,7 +74,7 @@ class TestEnsureInstalledAndRunning(unittest.TestCase):
 
     def test_verify_failed_when_install_succeeds_but_no_version(self):
         """装完仍拿不到 version → VerifyFailedError。"""
-        self.atoms["get_version"].side_effect = ["", ""]  # 装前空、装后还空
+        self.atoms["version"].side_effect = ["", ""]  # 装前空、装后还空
         with self.assertRaises(VerifyFailedError):
             self._make_manager().ensure_installed_and_running()
 
@@ -95,32 +95,32 @@ class TestEnsureInstalledAndRunning(unittest.TestCase):
     # ---------- 服务启动 ----------
 
     def test_inactive_service_gets_started(self):
-        # 第一次 is_service_active False，start 后第二次 True
-        self.atoms["is_service_active"].side_effect = [False, True]
+        # 第一次 is_running False，start 后第二次 True
+        self.atoms["is_running"].side_effect = [False, True]
         result = self._make_manager().ensure_installed_and_running()
         self.atoms["start"].assert_called_once()
         self.assertIn("started", result["actions_taken"])
 
     def test_service_still_inactive_after_start_raises(self):
-        self.atoms["is_service_active"].side_effect = [False, False]
+        self.atoms["is_running"].side_effect = [False, False]
         with self.assertRaises(ServiceNotActiveError):
             self._make_manager().ensure_installed_and_running()
 
     # ---------- 开机自启 ----------
 
     def test_not_enabled_triggers_enable(self):
-        self.atoms["is_service_enabled"].return_value = False
+        self.atoms["is_enabled"].return_value = False
         result = self._make_manager().ensure_installed_and_running()
         self.atoms["enable"].assert_called_once()
         self.assertIn("enabled_autostart", result["actions_taken"])
 
     def test_already_enabled_skips(self):
-        self.atoms["is_service_enabled"].return_value = True
+        self.atoms["is_enabled"].return_value = True
         result = self._make_manager().ensure_installed_and_running()
         self.atoms["enable"].assert_not_called()
 
     def test_enable_failure_propagates(self):
-        self.atoms["is_service_enabled"].return_value = False
+        self.atoms["is_enabled"].return_value = False
         self.atoms["enable"].side_effect = EnableFailedError("无权限")
         with self.assertRaises(EnableFailedError):
             self._make_manager().ensure_installed_and_running()
@@ -128,7 +128,7 @@ class TestEnsureInstalledAndRunning(unittest.TestCase):
     # ---------- install 失败 ----------
 
     def test_install_failure_propagates(self):
-        self.atoms["get_version"].side_effect = ["", "Xray 1.8.4"]
+        self.atoms["version"].side_effect = ["", "Xray 1.8.4"]
         self.atoms["install"].side_effect = InstallFailedError("网络挂了")
         with self.assertRaises(InstallFailedError):
             self._make_manager().ensure_installed_and_running()
@@ -137,10 +137,10 @@ class TestEnsureInstalledAndRunning(unittest.TestCase):
 
     def test_full_fresh_install_actions(self):
         """场景：完全新机器，全部步骤都要做。"""
-        self.atoms["get_version"].side_effect = ["", "Xray 1.8.4"]
+        self.atoms["version"].side_effect = ["", "Xray 1.8.4"]
         self.atoms["is_config_blank"].return_value = True
-        self.atoms["is_service_active"].side_effect = [False, True]
-        self.atoms["is_service_enabled"].return_value = False
+        self.atoms["is_running"].side_effect = [False, True]
+        self.atoms["is_enabled"].return_value = False
 
         result = self._make_manager().ensure_installed_and_running()
 

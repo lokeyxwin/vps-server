@@ -206,7 +206,7 @@ def _save_failure_with_context(ip: str, manager: XrayManager, exc: XrayError) ->
     partial_version = ""
     partial_installed = False
     try:
-        partial_version = manager.get_version()
+        partial_version = manager.version()
     except Exception:  # noqa: BLE001 — 失败信息收集是 best-effort
         pass
     try:

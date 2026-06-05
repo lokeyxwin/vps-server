@@ -97,6 +97,16 @@ XRAY_ENABLE_FAILED_MESSAGE = (
     "② systemd 配置异常。"
     "建议：登录服务器跑 `systemctl enable xray` 看具体错误；服务本身可能仍在跑，重启服务器后会丢失。"
 )
+XRAY_SERVICE_STOP_FAILED_MESSAGE = (
+    "systemctl stop xray 命令失败。"
+    "常见原因：用户无 root 权限 / xray 服务单元损坏。"
+    "建议：登录服务器跑 `systemctl stop xray && systemctl status xray --no-pager -l` 看错误。"
+)
+XRAY_DISABLE_FAILED_MESSAGE = (
+    "systemctl disable xray 失败（无法关闭开机自启）。"
+    "常见原因：用户无 root 权限 / 服务单元已损坏。"
+    "建议：登录服务器跑 `systemctl disable xray` 看具体错误。"
+)
 
 
 # ============================================================
@@ -128,6 +138,14 @@ class EnableFailedError(XrayError):
     code = "enable_failed"
 
 
+class StopFailedError(XrayError):
+    code = "stop_failed"
+
+
+class DisableFailedError(XrayError):
+    code = "disable_failed"
+
+
 # ============================================================
 # 原子函数：查询类
 # ============================================================
@@ -138,19 +156,19 @@ def is_installed(client: paramiko.SSHClient) -> bool:
     return result["exit_code"] == 0 and result["stdout"].strip() != ""
 
 
-def is_service_active(client: paramiko.SSHClient) -> bool:
-    """检查 xray systemd 服务是否处于 active 状态。"""
+def is_running(client: paramiko.SSHClient) -> bool:
+    """检查 xray systemd 服务是否处于 active（运行中）状态。"""
     result = execute_command(client, "systemctl is-active xray 2>/dev/null")
     return result["stdout"].strip() == "active"
 
 
-def is_service_enabled(client: paramiko.SSHClient) -> bool:
+def is_enabled(client: paramiko.SSHClient) -> bool:
     """检查 xray systemd 服务是否开机自启。"""
     result = execute_command(client, "systemctl is-enabled xray 2>/dev/null")
     return result["stdout"].strip() == "enabled"
 
 
-def get_version(client: paramiko.SSHClient) -> str:
+def version(client: paramiko.SSHClient) -> str:
     """获取 xray 版本号。未安装或失败返回 ''。"""
     result = execute_command(client, "xray version 2>/dev/null | head -n1")
     if result["exit_code"] != 0:
@@ -198,6 +216,26 @@ def enable(client: paramiko.SSHClient) -> None:
     if result["exit_code"] != 0:
         raise EnableFailedError(
             f"{XRAY_ENABLE_FAILED_MESSAGE}: exit={result['exit_code']} "
+            f"stderr={result['stderr'][:200]}"
+        )
+
+
+def stop(client: paramiko.SSHClient) -> None:
+    """停止 xray systemd 服务。失败抛 StopFailedError。"""
+    result = execute_command(client, "systemctl stop xray")
+    if result["exit_code"] != 0:
+        raise StopFailedError(
+            f"{XRAY_SERVICE_STOP_FAILED_MESSAGE}: exit={result['exit_code']} "
+            f"stderr={result['stderr'][:200]}"
+        )
+
+
+def disable(client: paramiko.SSHClient) -> None:
+    """关闭 xray 开机自启。失败抛 DisableFailedError。"""
+    result = execute_command(client, "systemctl disable xray")
+    if result["exit_code"] != 0:
+        raise DisableFailedError(
+            f"{XRAY_DISABLE_FAILED_MESSAGE}: exit={result['exit_code']} "
             f"stderr={result['stderr'][:200]}"
         )
 

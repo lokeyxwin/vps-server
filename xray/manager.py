@@ -42,14 +42,14 @@ class XrayManager:
     def is_installed(self) -> bool:
         return atom.is_installed(self.client)
 
-    def is_service_active(self) -> bool:
-        return atom.is_service_active(self.client)
+    def is_running(self) -> bool:
+        return atom.is_running(self.client)
 
-    def is_service_enabled(self) -> bool:
-        return atom.is_service_enabled(self.client)
+    def is_enabled(self) -> bool:
+        return atom.is_enabled(self.client)
 
-    def get_version(self) -> str:
-        return atom.get_version(self.client)
+    def version(self) -> str:
+        return atom.version(self.client)
 
     # -------- 操作类（直接代理 atom，错误向上抛）--------
 
@@ -62,8 +62,14 @@ class XrayManager:
     def start(self) -> None:
         atom.start(self.client)
 
+    def stop(self) -> None:
+        atom.stop(self.client)
+
     def enable(self) -> None:
         atom.enable(self.client)
+
+    def disable(self) -> None:
+        atom.disable(self.client)
 
     def is_config_blank(self) -> bool:
         return atom.is_config_blank(self.client)
@@ -80,12 +86,12 @@ class XrayManager:
     def ensure_installed_and_running(self) -> dict:
         """保证 xray 已装 + 服务在跑 + 开机自启已设。
 
-        流程（get_version 作为统一「是否已装」判断）：
-            ① version = get_version()
-            ② 空 → install() → 再 get_version() 验证（仍空 → VerifyFailedError）
+        流程（version() 作为统一「是否已装」判断）：
+            ① v = version()
+            ② 空 → install() → 再 version() 验证（仍空 → VerifyFailedError）
                非空 → was_already = True
             ③ 不管哪条路径都要：
-               - 检查服务是否 active，不是就 start，仍不行 → ServiceNotActiveError
+               - 检查服务是否 running，不是就 start，仍不行 → ServiceNotActiveError
                - 检查是否开机自启，不是就 enable，失败 → EnableFailedError
 
         返回 {"version": str, "was_already_installed": bool, "actions_taken": [str]}。
@@ -94,9 +100,9 @@ class XrayManager:
         actions: list[str] = []
 
         # ① 统一先查版本号——能拿到版本 = xray 真能跑
-        version = self.get_version()
+        v = self.version()
 
-        if not version:
+        if not v:
             # 走全新安装路径
             logger.info("未检测到 xray 版本号，开始全新安装（约 30-60s）")
             self.install()
@@ -104,12 +110,12 @@ class XrayManager:
             was_already = False
 
             # 装完再验证一次：拿不到版本号 = 二进制坏了
-            version = self.get_version()
-            if not version:
+            v = self.version()
+            if not v:
                 raise VerifyFailedError(XRAY_VERIFY_FAILED_MESSAGE)
         else:
             # 已装，进入修复路径
-            logger.info("检测到 xray 已装 version=%s，进入修复路径", version)
+            logger.info("检测到 xray 已装 version=%s，进入修复路径", v)
             was_already = True
 
         # ② 启动前确保 config 不空（空 config 会导致 systemctl start 失败 exit=23）
@@ -118,24 +124,24 @@ class XrayManager:
             self.write_default_config()
             actions.append("wrote_default_config")
 
-        # ③ 确保服务在线（active）
-        if not self.is_service_active():
+        # ③ 确保服务在线（running）
+        if not self.is_running():
             logger.info("xray 服务未 active，尝试 systemctl start xray")
             self.start()
             actions.append("started")
-            if not self.is_service_active():
+            if not self.is_running():
                 raise ServiceNotActiveError(
-                    f"{XRAY_SERVICE_NOT_ACTIVE_MESSAGE}（version={version}）"
+                    f"{XRAY_SERVICE_NOT_ACTIVE_MESSAGE}（version={v}）"
                 )
 
         # ③ 确保开机自启
-        if not self.is_service_enabled():
+        if not self.is_enabled():
             logger.info("xray 未设开机自启，尝试 systemctl enable xray")
             self.enable()
             actions.append("enabled_autostart")
 
         return {
-            "version": version,
+            "version": v,
             "was_already_installed": was_already,
             "actions_taken": actions,
         }
