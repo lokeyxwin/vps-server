@@ -27,6 +27,26 @@ class PortProbeError(RuntimeError):
     """端口探测失败（ss 命令异常 / 无法解析输出）。"""
 
 
+# ============================================================
+# 业务永远要排除的常见端口
+# ============================================================
+# 这些端口业务永远不该挑作为代理出口，即使 ss -tln 显示"未占用"
+# （某些服务可能临时停了但即将启动；或者业务约定保留）：
+#   22    SSH
+#   25    SMTP
+#   53    DNS
+#   80    HTTP
+#   443   HTTPS
+#   1082  HTTP proxy（部分发行版默认）
+#   3306  MySQL
+#   8080  HTTP alt
+#   18789 项目历史约定保留
+#   54321 PostgreSQL 备用端口
+COMMON_RESERVED_PORTS: frozenset[int] = frozenset(
+    {22, 25, 53, 80, 443, 1082, 3306, 8080, 18789, 54321}
+)
+
+
 def get_used_ports(
     client: paramiko.SSHClient,
     start_port: int,
@@ -75,3 +95,39 @@ def get_used_ports(
             used.add(port)
 
     return used
+
+
+def is_port_free(client: paramiko.SSHClient, port: int) -> bool:
+    """快捷查单个端口是否空闲（包装 get_used_ports 区间=单点）。
+
+    业务用法：装单个服务时挑端口前调一次，确认目标端口没被占。
+    """
+    return port not in get_used_ports(client, port, port)
+
+
+# ============================================================
+# 纯函数：从「已用端口集合」推算「可用端口集合」
+# ============================================================
+
+def compute_available_ports(
+    used: set[int],
+    start_port: int,
+    end_port: int,
+    exclude: set[int] | frozenset[int] | None = None,
+) -> set[int]:
+    """计算区间 [start_port, end_port] 内的可用端口集合。
+
+    可用 = 区间内所有端口 - 已用端口 (used) - 永远排除的端口 (exclude)。
+
+    纯函数，不接 SSH。业务先调 get_used_ports 拿 used，再调本函数得 available。
+    exclude 不传时默认走 COMMON_RESERVED_PORTS（22/443/3306 等）。
+
+    业务用法：
+        used = get_used_ports(client, 18441, 18450)
+        free = compute_available_ports(used, 18441, 18450)  # 默认排除 COMMON_RESERVED
+        port = min(free)  # 挑一个
+    """
+    if exclude is None:
+        exclude = COMMON_RESERVED_PORTS
+    all_in_range = set(range(start_port, end_port + 1))
+    return all_in_range - used - exclude

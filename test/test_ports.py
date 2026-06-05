@@ -11,9 +11,12 @@ from unittest.mock import patch, MagicMock
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from core.ports import (
+    COMMON_RESERVED_PORTS,
     PORT_PROBE_FAILED_MESSAGE,
     PortProbeError,
+    compute_available_ports,
     get_used_ports,
+    is_port_free,
 )
 
 
@@ -164,6 +167,107 @@ class TestGetUsedPorts(unittest.TestCase):
         get_used_ports(MagicMock(), 1, 65535)
         args, _ = mock_exec.call_args
         self.assertIn("ss -tln", args[1])
+
+
+# ============================================================
+# is_port_free：单端口便捷查询
+# ============================================================
+
+class TestIsPortFree(unittest.TestCase):
+    @patch("core.ports.execute_command")
+    def test_returns_true_when_port_not_listening(self, mock_exec):
+        mock_exec.return_value = {
+            "stdout": "State Recv Send Local Address:Port Peer Process\n"
+                      "LISTEN 0 128 0.0.0.0:22 0.0.0.0:*\n",
+            "stderr": "", "exit_code": 0,
+        }
+        self.assertTrue(is_port_free(MagicMock(), 18443))
+
+    @patch("core.ports.execute_command")
+    def test_returns_false_when_port_in_use(self, mock_exec):
+        mock_exec.return_value = {
+            "stdout": "State Recv Send Local Address:Port Peer Process\n"
+                      "LISTEN 0 128 0.0.0.0:18443 0.0.0.0:*\n",
+            "stderr": "", "exit_code": 0,
+        }
+        self.assertFalse(is_port_free(MagicMock(), 18443))
+
+
+# ============================================================
+# compute_available_ports：纯函数算可用集合
+# ============================================================
+
+class TestComputeAvailablePorts(unittest.TestCase):
+    def test_returns_all_when_no_used_no_exclude(self):
+        free = compute_available_ports(used=set(), start_port=10, end_port=12, exclude=set())
+        self.assertEqual(free, {10, 11, 12})
+
+    def test_subtracts_used(self):
+        free = compute_available_ports(used={11}, start_port=10, end_port=12, exclude=set())
+        self.assertEqual(free, {10, 12})
+
+    def test_subtracts_exclude(self):
+        free = compute_available_ports(used=set(), start_port=10, end_port=12, exclude={11})
+        self.assertEqual(free, {10, 12})
+
+    def test_subtracts_both_used_and_exclude(self):
+        free = compute_available_ports(
+            used={10}, start_port=10, end_port=12, exclude={12},
+        )
+        self.assertEqual(free, {11})
+
+    def test_exclude_outside_range_is_no_op(self):
+        """exclude 列表里有不在区间的端口不影响结果。"""
+        free = compute_available_ports(
+            used=set(), start_port=10, end_port=12, exclude={22, 443, 11},
+        )
+        self.assertEqual(free, {10, 12})
+
+    def test_default_exclude_is_common_reserved(self):
+        """不传 exclude 时默认走 COMMON_RESERVED_PORTS，22/443 等会被排除。"""
+        # 区间含 22 (SSH)，确认它被默认排除
+        free = compute_available_ports(used=set(), start_port=20, end_port=25)
+        self.assertNotIn(22, free)  # 22 在 COMMON_RESERVED_PORTS 里
+        self.assertIn(20, free)
+        self.assertIn(21, free)
+        self.assertIn(23, free)
+
+    def test_empty_range_returns_empty(self):
+        """start > end 时返回空集合（边界）。"""
+        free = compute_available_ports(used=set(), start_port=20, end_port=19, exclude=set())
+        self.assertEqual(free, set())
+
+    def test_single_port_range(self):
+        free = compute_available_ports(used=set(), start_port=18443, end_port=18443, exclude=set())
+        self.assertEqual(free, {18443})
+
+    def test_realistic_proxy_range_scenario(self):
+        """模拟 rgIP 真实场景：区间 18441-18450，扣掉 OS 占用 + 默认排除。"""
+        used_in_range = {18445}  # ss -tln 扫到 18445 被占
+        free = compute_available_ports(
+            used=used_in_range, start_port=18441, end_port=18450,
+        )
+        # 18445 已用 → 排除；COMMON_RESERVED_PORTS 里没有 18441-18450 任一个
+        # 所以可用应该是 {18441, 18442, 18443, 18444, 18446, 18447, 18448, 18449, 18450}
+        self.assertEqual(
+            free,
+            {18441, 18442, 18443, 18444, 18446, 18447, 18448, 18449, 18450},
+        )
+
+
+# ============================================================
+# COMMON_RESERVED_PORTS：常量自检
+# ============================================================
+
+class TestCommonReservedPorts(unittest.TestCase):
+    def test_is_frozenset(self):
+        """常量应该是 frozenset，业务里直接用不能被改。"""
+        self.assertIsInstance(COMMON_RESERVED_PORTS, frozenset)
+
+    def test_includes_common_service_ports(self):
+        """22/80/443/3306 必须在内（这是 RCE 攻击者爱挑的端口，业务永远不该用）。"""
+        for port in (22, 80, 443, 3306):
+            self.assertIn(port, COMMON_RESERVED_PORTS, f"{port} 不在 COMMON_RESERVED_PORTS")
 
 
 if __name__ == "__main__":
