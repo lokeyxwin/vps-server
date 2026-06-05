@@ -26,6 +26,7 @@ xray 服务层（install/start/stop/enable/disable/...）在 xray/service.py。
 
 from __future__ import annotations
 
+import copy
 import json
 import secrets
 import string
@@ -96,6 +97,19 @@ CONFIG_READ_FAILED_MESSAGE = (
     "建议：登录服务器跑 `cat /usr/local/etc/xray/config.json` 看实际内容。"
 )
 
+PORT_ALREADY_BOUND_MESSAGE = (
+    "目标端口已经被现有 inbound 占用，不能重复绑定。"
+    "通常意味着 rgvps 端口审计与实际 xray config 不一致（罕见竞态）。"
+    "建议：让业务返回 no_available_port，让 caller 重新挑端口或检查 proxy_record 是否已有该端口的行。"
+)
+
+OUTBOUND_TAG_CONFLICT_MESSAGE = (
+    "目标 outbound tag 已存在于当前 config。"
+    "caller 应给 proxy_outbound 起一个该 config 里不重复的 tag。"
+    "建议 tag 命名：proxy-{country_code}-{vps_port} 或 proxy-{vps_port}，"
+    "确保跨多次部署不重复。"
+)
+
 
 # ============================================================
 # 错误类
@@ -107,6 +121,14 @@ class UnsupportedProtocolError(ValueError):
 
 class PortConflictError(ValueError):
     """客户端入站端口跟 xray 默认直出端口（DEFAULT_PORT）撞了。"""
+
+
+class PortAlreadyBoundError(ValueError):
+    """目标 vps_port 已被 current config 里某条 inbound 占用。"""
+
+
+class OutboundTagConflictError(ValueError):
+    """proxy_outbound 的 tag 跟 current config 里已有 outbound tag 撞了。"""
 
 
 class ConfigWriteError(RuntimeError):
@@ -389,6 +411,154 @@ def extract_port_bindings(config_dict: dict) -> list[dict]:
         })
 
     return bindings
+
+
+# ============================================================
+# 纯函数：往现有 config 增量加 / 删一组 binding（rgIP 业务用）
+#
+# 业务约定：一条 rgIP 部署 = 三件套（一组 inbound + 一个 outbound + 一条 routing 规则）
+# 三件套靠 tag 互相挂钩：
+#     client-{vps_port}      ← 新 inbound 的 tag
+#     proxy_outbound["tag"]  ← 新 outbound 的 tag（caller 自己起，建议带 country_code）
+#     routing.rules 一条 inboundTag=[client-{port}] → outboundTag=<proxy tag>
+#
+# 这两个函数都 deepcopy 入参，不 mutate；返回新 config dict。
+# ============================================================
+
+def add_proxy_binding(
+    current: dict,
+    vps_port: int,
+    proxy_outbound: dict,
+    inbound_user: str,
+    inbound_pwd: str,
+) -> dict:
+    """往现有 xray config 里追加一组 rgIP binding（不破坏别的 client inbound）。
+
+    参数：
+        current        : 现有 config dict（read_config 拿到的；空 dict / None 也接受）
+        vps_port       : 18441..18450 之一；== DEFAULT_PORT 抛 PortConflictError
+        proxy_outbound : caller 用 build_proxy_outbound() 造好的 outbound dict，
+                         应已设好 tag（建议 proxy-{country}-{port}）和 _meta
+        inbound_user / inbound_pwd : 客户端连本机的账密（generate_random_auth 出的）
+
+    冲突检查（任一命中抛错）：
+        - vps_port == DEFAULT_PORT (18440) → PortConflictError
+        - 已有 inbound 用 vps_port      → PortAlreadyBoundError
+        - 已有 outbound tag 撞 proxy_outbound["tag"] → OutboundTagConflictError
+
+    空 config (`{}` 或缺关键字段) → 先用 build_vps_direct_config 起 baseline 再追加，
+    保证服务起步时 default-direct 在场。
+    """
+    if vps_port == DEFAULT_PORT:
+        raise PortConflictError(
+            f"{PORT_CONFLICTS_WITH_DEFAULT_MESSAGE} 传入 vps_port={vps_port}"
+        )
+
+    # 空 / 缺关键字段 → 起 baseline；否则深拷贝避免 mutate 入参
+    if not current or "inbounds" not in current:
+        new = build_vps_direct_config()
+    else:
+        new = copy.deepcopy(current)
+
+    # 防御性补齐可能缺失的子结构（实战中遇到过 routing 字段缺失的脏 config）
+    new.setdefault("inbounds", [])
+    new.setdefault("outbounds", [])
+    new.setdefault("routing", {})
+    new["routing"].setdefault("rules", [])
+
+    # 冲突：vps_port 已被某条 inbound 占用
+    for inb in new["inbounds"]:
+        if inb.get("port") == vps_port:
+            raise PortAlreadyBoundError(
+                f"{PORT_ALREADY_BOUND_MESSAGE} 冲突端口={vps_port} "
+                f"已被 tag={inb.get('tag', '?')} 占用"
+            )
+
+    # 冲突：outbound tag 撞
+    new_outbound_tag = proxy_outbound.get("tag", "")
+    if new_outbound_tag:
+        for ob in new["outbounds"]:
+            if ob.get("tag") == new_outbound_tag:
+                raise OutboundTagConflictError(
+                    f"{OUTBOUND_TAG_CONFLICT_MESSAGE} 冲突 tag={new_outbound_tag!r}"
+                )
+
+    # 构造新 client inbound（结构和 build_proxy_relay_config 里一致）
+    client_tag = f"client-{vps_port}"
+    client_inbound = {
+        "tag": client_tag,
+        "port": vps_port,
+        "listen": "0.0.0.0",
+        "protocol": "socks",
+        "settings": {
+            "auth": "password",
+            "udp": True,
+            "accounts": [{"user": inbound_user, "pass": inbound_pwd}],
+        },
+    }
+
+    # 三件套 append（用 deepcopy 把 caller 的 proxy_outbound 也隔离，
+    # 否则后续 caller 修改它会反映到返回值里）
+    new["inbounds"].append(client_inbound)
+    new["outbounds"].append(copy.deepcopy(proxy_outbound))
+    new["routing"]["rules"].append({
+        "type": "field",
+        "inboundTag": [client_tag],
+        "outboundTag": new_outbound_tag,
+    })
+
+    return new
+
+
+def remove_proxy_binding(current: dict, vps_port: int) -> dict:
+    """从现有 xray config 里删除指定 vps_port 对应的 binding 三件套。
+
+    用途：
+        - rgIP 业务回滚（内 ping 不通 / egress 不匹配 时撤销刚追加的三件套）
+        - 未来 IP 过期巡检模块按端口下线 binding
+
+    幂等：vps_port 对应的 inbound 不在 config 里 → 直接返回 deepcopy(current)，不抛错。
+    不会动 default-direct inbound / direct outbound / 别的 client-* binding。
+
+    防御：删 outbound 前确认该 outboundTag 不再被剩余 routing 规则引用
+    （正常 1 inbound 1 outbound 时直接删；坏数据时保留 outbound 避免误伤）。
+    """
+    new = copy.deepcopy(current) if current else {}
+    if not new or "inbounds" not in new:
+        return new
+
+    client_tag = f"client-{vps_port}"
+
+    # ① 删 inbound
+    inbounds = new.get("inbounds", []) or []
+    new_inbounds = [inb for inb in inbounds if inb.get("tag") != client_tag]
+    inbound_removed = len(new_inbounds) < len(inbounds)
+    new["inbounds"] = new_inbounds
+
+    if not inbound_removed:
+        # 幂等 noop：caller 重复 remove 不抛错
+        return new
+
+    # ② 删 routing 规则 + 记下被关联的 outbound tag
+    routing = new.setdefault("routing", {})
+    rules = routing.get("rules", []) or []
+    outbound_tags_to_drop: set[str] = set()
+    new_rules: list[dict] = []
+    for rule in rules:
+        in_tags = rule.get("inboundTag", []) or []
+        if client_tag in in_tags:
+            outbound_tags_to_drop.add(rule.get("outboundTag", ""))
+        else:
+            new_rules.append(rule)
+    routing["rules"] = new_rules
+
+    # ③ 删 outbound：只删不再被任何剩余规则引用的（防御坏数据）
+    still_used: set[str] = {rule.get("outboundTag", "") for rule in new_rules}
+    truly_drop = outbound_tags_to_drop - still_used - {""}  # 排除空 tag
+    outbounds = new.get("outbounds", []) or []
+    new["outbounds"] = [ob for ob in outbounds if ob.get("tag") not in truly_drop]
+
+    return new
 
 
 # ============================================================

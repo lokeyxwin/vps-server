@@ -25,14 +25,18 @@ from xray.config import (
     ConfigReadError,
     ConfigValidationError,
     ConfigWriteError,
+    OutboundTagConflictError,
+    PortAlreadyBoundError,
     PortConflictError,
     UnsupportedProtocolError,
+    add_proxy_binding,
     build_proxy_outbound,
     build_proxy_relay_config,
     build_vps_direct_config,
     extract_port_bindings,
     generate_random_auth,
     read_config,
+    remove_proxy_binding,
     upload_config,
     validate_config,
     write_default_config,
@@ -704,6 +708,292 @@ class TestReadConfig(unittest.TestCase):
         read_config(MagicMock())
         args, _ = mock_exec.call_args
         self.assertIn(DEFAULT_CONFIG_PATH, args[1])
+
+
+# ============================================================
+# add_proxy_binding / remove_proxy_binding
+# ============================================================
+
+def _proxy_outbound(tag: str = "proxy-X-18443") -> dict:
+    """测试用的 proxy outbound 模板。"""
+    return build_proxy_outbound(
+        host="upstream.example.com", port=1080,
+        user="u", pwd="p", protocol=PROTOCOL_SOCKS5, tag=tag,
+    )
+
+
+class TestAddProxyBinding(unittest.TestCase):
+    def test_empty_config_bootstraps_baseline_then_adds(self):
+        """空 config 入参 → 先起 baseline + 加新 binding。结果含 default-direct + 1 个 client。"""
+        result = add_proxy_binding(
+            current={}, vps_port=18443,
+            proxy_outbound=_proxy_outbound(),
+            inbound_user="cu", inbound_pwd="cp",
+        )
+        inbound_tags = [inb["tag"] for inb in result["inbounds"]]
+        self.assertIn("default-direct", inbound_tags)
+        self.assertIn("client-18443", inbound_tags)
+
+        outbound_tags = [ob["tag"] for ob in result["outbounds"]]
+        self.assertIn("direct", outbound_tags)
+        self.assertIn("proxy-X-18443", outbound_tags)
+
+        rules = result["routing"]["rules"]
+        self.assertEqual(len(rules), 2)  # default-direct→direct + client-18443→proxy-X-18443
+
+    def test_appends_to_existing_config(self):
+        """已有 default-direct + 一条 client → 加第三条，前两条原样保留。"""
+        base = build_proxy_relay_config(
+            vps_port=18441,
+            proxy_outbound=_proxy_outbound("proxy-A-18441"),
+            inbound_user="ua", inbound_pwd="pa",
+        )
+        result = add_proxy_binding(
+            current=base, vps_port=18443,
+            proxy_outbound=_proxy_outbound("proxy-X-18443"),
+            inbound_user="cu", inbound_pwd="cp",
+        )
+
+        inbound_tags = [inb["tag"] for inb in result["inbounds"]]
+        self.assertEqual(
+            sorted(inbound_tags),
+            sorted(["default-direct", "client-18441", "client-18443"]),
+        )
+
+        outbound_tags = [ob["tag"] for ob in result["outbounds"]]
+        self.assertIn("direct", outbound_tags)
+        self.assertIn("proxy-A-18441", outbound_tags)
+        self.assertIn("proxy-X-18443", outbound_tags)
+
+        # routing 共 3 条：default-direct + client-18441 + 新加的 client-18443
+        self.assertEqual(len(result["routing"]["rules"]), 3)
+
+    def test_new_routing_rule_correctly_links_inbound_to_outbound(self):
+        result = add_proxy_binding(
+            current={}, vps_port=18443,
+            proxy_outbound=_proxy_outbound("proxy-X-18443"),
+            inbound_user="cu", inbound_pwd="cp",
+        )
+        new_rule = next(
+            r for r in result["routing"]["rules"]
+            if "client-18443" in (r.get("inboundTag") or [])
+        )
+        self.assertEqual(new_rule["outboundTag"], "proxy-X-18443")
+        self.assertEqual(new_rule["type"], "field")
+
+    def test_client_inbound_uses_password_auth(self):
+        result = add_proxy_binding(
+            current={}, vps_port=18443,
+            proxy_outbound=_proxy_outbound(),
+            inbound_user="cuser", inbound_pwd="cpwd",
+        )
+        client = next(inb for inb in result["inbounds"] if inb["tag"] == "client-18443")
+        self.assertEqual(client["protocol"], "socks")
+        self.assertEqual(client["settings"]["auth"], "password")
+        self.assertEqual(client["settings"]["accounts"][0]["user"], "cuser")
+        self.assertEqual(client["settings"]["accounts"][0]["pass"], "cpwd")
+        self.assertEqual(client["port"], 18443)
+
+    def test_vps_port_equals_default_port_raises_port_conflict(self):
+        with self.assertRaises(PortConflictError):
+            add_proxy_binding(
+                current={}, vps_port=DEFAULT_PORT,
+                proxy_outbound=_proxy_outbound(),
+                inbound_user="u", inbound_pwd="p",
+            )
+
+    def test_port_already_bound_raises(self):
+        """同一 vps_port 重复 add → PortAlreadyBoundError。"""
+        base = build_proxy_relay_config(
+            vps_port=18441,
+            proxy_outbound=_proxy_outbound("proxy-A-18441"),
+            inbound_user="ua", inbound_pwd="pa",
+        )
+        with self.assertRaises(PortAlreadyBoundError):
+            add_proxy_binding(
+                current=base, vps_port=18441,
+                proxy_outbound=_proxy_outbound("proxy-B-18441"),
+                inbound_user="u", inbound_pwd="p",
+            )
+
+    def test_outbound_tag_conflict_raises(self):
+        """新 outbound 的 tag 撞已有 → OutboundTagConflictError。"""
+        base = build_proxy_relay_config(
+            vps_port=18441,
+            proxy_outbound=_proxy_outbound("proxy-COLLIDE"),
+            inbound_user="ua", inbound_pwd="pa",
+        )
+        with self.assertRaises(OutboundTagConflictError):
+            add_proxy_binding(
+                current=base, vps_port=18443,
+                proxy_outbound=_proxy_outbound("proxy-COLLIDE"),  # 撞
+                inbound_user="u", inbound_pwd="p",
+            )
+
+    def test_missing_routing_field_auto_filled(self):
+        """current 缺 routing 字段（脏 config）→ 自动补齐。"""
+        current = {
+            "inbounds": [{"tag": "default-direct", "port": DEFAULT_PORT}],
+            "outbounds": [{"tag": "direct", "protocol": "freedom"}],
+            # 故意没有 routing
+        }
+        result = add_proxy_binding(
+            current=current, vps_port=18443,
+            proxy_outbound=_proxy_outbound(),
+            inbound_user="u", inbound_pwd="p",
+        )
+        self.assertIn("routing", result)
+        self.assertIn("rules", result["routing"])
+        self.assertEqual(len(result["routing"]["rules"]), 1)  # 只追加了新的
+
+    def test_input_config_not_mutated(self):
+        """关键不可变性：caller 的 current 不应被 mutate。"""
+        base = build_proxy_relay_config(
+            vps_port=18441,
+            proxy_outbound=_proxy_outbound("proxy-A-18441"),
+            inbound_user="ua", inbound_pwd="pa",
+        )
+        before_inbound_count = len(base["inbounds"])
+        before_outbound_count = len(base["outbounds"])
+        before_rule_count = len(base["routing"]["rules"])
+
+        add_proxy_binding(
+            current=base, vps_port=18443,
+            proxy_outbound=_proxy_outbound("proxy-X-18443"),
+            inbound_user="u", inbound_pwd="p",
+        )
+
+        self.assertEqual(len(base["inbounds"]), before_inbound_count)
+        self.assertEqual(len(base["outbounds"]), before_outbound_count)
+        self.assertEqual(len(base["routing"]["rules"]), before_rule_count)
+
+    def test_proxy_outbound_meta_preserved(self):
+        """outbound._meta 业务自定义字段要原样进 result。"""
+        ob = _proxy_outbound()
+        ob["_meta"] = {"egress_ip": "1.2.3.4", "egress_country": "US"}
+        result = add_proxy_binding(
+            current={}, vps_port=18443,
+            proxy_outbound=ob,
+            inbound_user="u", inbound_pwd="p",
+        )
+        new_ob = next(
+            o for o in result["outbounds"] if o.get("tag") == "proxy-X-18443"
+        )
+        self.assertEqual(new_ob["_meta"]["egress_ip"], "1.2.3.4")
+        self.assertEqual(new_ob["_meta"]["egress_country"], "US")
+
+
+class TestRemoveProxyBinding(unittest.TestCase):
+    def test_removes_inbound_outbound_and_routing(self):
+        config = add_proxy_binding(
+            current={}, vps_port=18443,
+            proxy_outbound=_proxy_outbound("proxy-X-18443"),
+            inbound_user="u", inbound_pwd="p",
+        )
+        result = remove_proxy_binding(config, 18443)
+
+        inbound_tags = [inb["tag"] for inb in result["inbounds"]]
+        self.assertNotIn("client-18443", inbound_tags)
+        self.assertIn("default-direct", inbound_tags)  # 保留
+
+        outbound_tags = [ob["tag"] for ob in result["outbounds"]]
+        self.assertNotIn("proxy-X-18443", outbound_tags)
+        self.assertIn("direct", outbound_tags)  # 保留
+
+        rules = result["routing"]["rules"]
+        for rule in rules:
+            self.assertNotIn("client-18443", rule.get("inboundTag") or [])
+            self.assertNotEqual(rule.get("outboundTag"), "proxy-X-18443")
+
+    def test_remove_nonexistent_port_is_idempotent(self):
+        """删不存在的 port → 不抛错，返回 deepcopy(current)。"""
+        config = add_proxy_binding(
+            current={}, vps_port=18443,
+            proxy_outbound=_proxy_outbound(),
+            inbound_user="u", inbound_pwd="p",
+        )
+        result = remove_proxy_binding(config, 18444)  # 不存在
+        # 结构跟原 config 一致（量级）
+        self.assertEqual(len(result["inbounds"]), len(config["inbounds"]))
+        self.assertEqual(len(result["outbounds"]), len(config["outbounds"]))
+
+    def test_remove_only_target_when_multiple_bindings(self):
+        """多条 binding 时只删一条，其他原样保留。"""
+        c1 = add_proxy_binding(
+            current={}, vps_port=18441,
+            proxy_outbound=_proxy_outbound("proxy-A-18441"),
+            inbound_user="ua", inbound_pwd="pa",
+        )
+        c2 = add_proxy_binding(
+            current=c1, vps_port=18443,
+            proxy_outbound=_proxy_outbound("proxy-X-18443"),
+            inbound_user="u", inbound_pwd="p",
+        )
+        # 现在 c2 有 default-direct + 2 个 client
+        result = remove_proxy_binding(c2, 18443)
+
+        inbound_tags = [inb["tag"] for inb in result["inbounds"]]
+        self.assertIn("default-direct", inbound_tags)
+        self.assertIn("client-18441", inbound_tags)
+        self.assertNotIn("client-18443", inbound_tags)
+
+        outbound_tags = [ob["tag"] for ob in result["outbounds"]]
+        self.assertIn("proxy-A-18441", outbound_tags)
+        self.assertNotIn("proxy-X-18443", outbound_tags)
+
+    def test_remove_does_not_touch_default_direct(self):
+        config = add_proxy_binding(
+            current={}, vps_port=18443,
+            proxy_outbound=_proxy_outbound(),
+            inbound_user="u", inbound_pwd="p",
+        )
+        result = remove_proxy_binding(config, 18443)
+        # default-direct 还在
+        dd = next(inb for inb in result["inbounds"] if inb["tag"] == "default-direct")
+        self.assertEqual(dd["port"], DEFAULT_PORT)
+        # direct outbound 还在
+        direct = next(ob for ob in result["outbounds"] if ob["tag"] == "direct")
+        self.assertEqual(direct["protocol"], "freedom")
+
+    def test_remove_does_not_mutate_input(self):
+        """关键不可变性：caller 的 current 不应被 mutate。"""
+        config = add_proxy_binding(
+            current={}, vps_port=18443,
+            proxy_outbound=_proxy_outbound(),
+            inbound_user="u", inbound_pwd="p",
+        )
+        before_inbound_count = len(config["inbounds"])
+        before_outbound_count = len(config["outbounds"])
+
+        remove_proxy_binding(config, 18443)
+
+        self.assertEqual(len(config["inbounds"]), before_inbound_count)
+        self.assertEqual(len(config["outbounds"]), before_outbound_count)
+
+    def test_remove_empty_config_returns_empty(self):
+        """current=空 → noop 返回空 dict。"""
+        result = remove_proxy_binding({}, 18443)
+        self.assertEqual(result, {})
+
+    def test_add_then_remove_returns_to_original_shape(self):
+        """add 再 remove 的端到端测试。"""
+        original = build_proxy_relay_config(
+            vps_port=18441,
+            proxy_outbound=_proxy_outbound("proxy-A-18441"),
+            inbound_user="ua", inbound_pwd="pa",
+        )
+        after_add = add_proxy_binding(
+            current=original, vps_port=18443,
+            proxy_outbound=_proxy_outbound("proxy-X-18443"),
+            inbound_user="u", inbound_pwd="p",
+        )
+        after_remove = remove_proxy_binding(after_add, 18443)
+
+        # 应该跟 original 同形（json 序列化后比较）
+        self.assertEqual(
+            json.loads(json.dumps(after_remove, sort_keys=True)),
+            json.loads(json.dumps(original, sort_keys=True)),
+        )
 
 
 if __name__ == "__main__":
