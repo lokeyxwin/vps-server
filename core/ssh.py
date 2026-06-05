@@ -74,7 +74,7 @@ def connect_server(
     失败时抛 ConnectionError 子类（AuthFailedError / ConnectTimeoutError /
     ConnectRefusedError），其他未分类异常抛 ConnectionError。
     """
-    logger.info("尝试连接 %s@%s:%s", username, ip, port)
+    logger.info("connect_server: ip=%s port=%s user=%s → connecting...", ip, port, username)
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
@@ -87,24 +87,26 @@ def connect_server(
             allow_agent=False,
             look_for_keys=False,
         )
-        logger.info("连接成功 %s@%s:%s", username, ip, port)
+        logger.info("connect_server: ip=%s port=%s user=%s → ok", ip, port, username)
         return client
     except paramiko.AuthenticationException as exc:
         client.close()
-        logger.warning("认证失败 ip=%s user=%s reason=%s", ip, username, exc)
+        logger.warning("connect_server: ip=%s user=%s → auth_failed (%s)", ip, username, exc)
         raise AuthFailedError(AUTH_FAILED_MESSAGE) from exc
     except (socket.timeout, TimeoutError) as exc:
         client.close()
-        logger.warning("连接超时 ip=%s port=%s reason=%s", ip, port, exc)
+        logger.warning("connect_server: ip=%s port=%s → timeout (%s)", ip, port, exc)
         raise ConnectTimeoutError(CONNECT_TIMEOUT_MESSAGE) from exc
     except ConnectionRefusedError as exc:
         client.close()
-        logger.warning("连接被拒 ip=%s port=%s reason=%s", ip, port, exc)
+        logger.warning("connect_server: ip=%s port=%s → refused (%s)", ip, port, exc)
         raise ConnectRefusedError(CONNECT_REFUSED_MESSAGE) from exc
     except Exception as exc:  # noqa: BLE001 — 兜底未分类异常并转换为业务错误
         client.close()
-        logger.error("连接失败（未分类） ip=%s port=%s type=%s reason=%s",
-                     ip, port, type(exc).__name__, exc)
+        logger.error(
+            "connect_server: ip=%s port=%s → failed (type=%s reason=%s)",
+            ip, port, type(exc).__name__, exc,
+        )
         raise ConnectionError(CONNECTION_ERROR_MESSAGE) from exc
 
 

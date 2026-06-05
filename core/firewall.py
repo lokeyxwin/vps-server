@@ -65,7 +65,10 @@ def open_tcp_port_range(
     失败抛 FirewallOpenError，业务可选择忽略（best-effort 模式）。
     """
     fw = detect_firewall(client)
-    logger.info("探测到防火墙类型 %s，开放 %d-%d/tcp", fw, start_port, end_port)
+    logger.info(
+        "open_tcp_port_range: start=%d end=%d → detected_fw=%s",
+        start_port, end_port, fw,
+    )
 
     if fw == FIREWALL_FIREWALLD:
         cmd_add = f"firewall-cmd --permanent --add-port={start_port}-{end_port}/tcp"
@@ -91,5 +94,5 @@ def open_tcp_port_range(
         return fw
 
     # FIREWALL_NONE：服务器没启用防火墙，无需做事
-    logger.info("服务器未启用 firewalld/ufw，无需开放端口")
+    logger.info("open_tcp_port_range: fw=none → no-op (服务器未启用 firewalld/ufw)")
     return fw

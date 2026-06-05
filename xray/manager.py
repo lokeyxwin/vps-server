@@ -129,7 +129,7 @@ class XrayManager:
 
         if not v:
             # 走全新安装路径
-            logger.info("未检测到 xray 版本号，开始全新安装（约 30-60s）")
+            logger.info("XrayManager.version: → '' (not installed) → installing... (~30-60s)")
             self.install()
             actions.append("installed")
             was_already = False
@@ -140,18 +140,18 @@ class XrayManager:
                 raise VerifyFailedError(XRAY_VERIFY_FAILED_MESSAGE)
         else:
             # 已装，进入修复路径
-            logger.info("检测到 xray 已装 version=%s，进入修复路径", v)
+            logger.info("XrayManager.version: → %s (already installed)", v)
             was_already = True
 
         # ② 启动前确保 config 不空（空 config 会导致 systemctl start 失败 exit=23）
         if self.is_config_blank():
-            logger.info("xray config 为空，写入默认 config（监听 18440 直出）")
+            logger.info("XrayManager.is_config_blank: → True → write_default_config")
             self.write_default_config()
             actions.append("wrote_default_config")
 
         # ③ 确保服务在线（running）
         if not self.is_running():
-            logger.info("xray 服务未 active，尝试 systemctl start xray")
+            logger.info("XrayManager.is_running: → False → systemctl start xray")
             self.start()
             actions.append("started")
             if not self.is_running():
@@ -161,7 +161,7 @@ class XrayManager:
 
         # ③ 确保开机自启
         if not self.is_enabled():
-            logger.info("xray 未设开机自启，尝试 systemctl enable xray")
+            logger.info("XrayManager.is_enabled: → False → systemctl enable xray")
             self.enable()
             actions.append("enabled_autostart")
 

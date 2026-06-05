@@ -40,21 +40,30 @@ def test_socks_proxy(
         "http": f"socks5h://{proxy_ip}:{proxy_port}",
         "https": f"socks5h://{proxy_ip}:{proxy_port}",
     }
-    logger.info("外部测试 socks5 %s:%s → %s", proxy_ip, proxy_port, test_url)
+    logger.info(
+        "test_socks_proxy: target=%s:%s url=%s → testing...",
+        proxy_ip, proxy_port, test_url,
+    )
     try:
         r = requests.get(test_url, proxies=proxies, timeout=timeout)
         ok = r.status_code == 200
         body = (r.text or "").strip()[:200]
         if ok:
-            logger.info("外部 socks5 通：%s:%s → 出口 IP=%s",
-                        proxy_ip, proxy_port, body)
+            logger.info(
+                "test_socks_proxy: target=%s:%s → ok=True http=%s egress=%s",
+                proxy_ip, proxy_port, r.status_code, body,
+            )
         else:
-            logger.warning("外部 socks5 不通：%s:%s status=%s",
-                           proxy_ip, proxy_port, r.status_code)
+            logger.warning(
+                "test_socks_proxy: target=%s:%s → ok=False http=%s",
+                proxy_ip, proxy_port, r.status_code,
+            )
         return {"ok": ok, "status_code": r.status_code, "body": body, "error": None}
     except Exception as exc:  # noqa: BLE001 — 兜底未分类异常并转换为业务错误
-        logger.warning("外部 socks5 测试异常 %s:%s reason=%s",
-                       proxy_ip, proxy_port, exc)
+        logger.warning(
+            "test_socks_proxy: target=%s:%s → error=%s (%s)",
+            proxy_ip, proxy_port, type(exc).__name__, exc,
+        )
         return {
             "ok": False,
             "status_code": None,

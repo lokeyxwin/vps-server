@@ -46,31 +46,32 @@ def register_vps(
     用于后续按服务商维度做续费提醒；未提供时存空字符串，不影响主流程。
     """
     logger.info(
-        "register_vps 开始 ip=%s user=%s port=%s provider=%s",
-        ip, username, port, provider_domain or "(none)",
+        "开始登记 VPS：ip=%s 账号=%s 端口=%s 服务商=%s",
+        ip, username, port, provider_domain or "(未填)",
     )
 
     # ① 查重
     with session_scope() as session:
         if session.query(VPSRecord).filter_by(ip=ip).first() is not None:
-            logger.info("register_vps 跳过 ip=%s 原因=已存在", ip)
+            logger.info("数据库里已经有这台 VPS 了，跳过登记：ip=%s", ip)
             return {"status": "duplicate", "message": f"IP {ip} 已存在数据库"}
 
     # ② SSH 测连 + 采集系统信息
+    logger.info("数据库里还没这台，准备 SSH 上去看看情况")
     try:
         with VPSSession(ip, username, password, port) as vps:
             info = vps.get_system_info()
     except AuthFailedError as exc:
-        logger.warning("register_vps 失败 ip=%s status=auth_failed", ip)
+        logger.warning("登录失败：账号或密码不对（ip=%s）", ip)
         return {"status": "auth_failed", "message": str(exc)}
     except ConnectTimeoutError as exc:
-        logger.warning("register_vps 失败 ip=%s status=timeout", ip)
+        logger.warning("连接超时：可能 SSH 端口被防火墙挡了（ip=%s）", ip)
         return {"status": "timeout", "message": str(exc)}
     except ConnectRefusedError as exc:
-        logger.warning("register_vps 失败 ip=%s status=refused", ip)
+        logger.warning("连接被拒：SSH 端口没开或端口号不对（ip=%s）", ip)
         return {"status": "refused", "message": str(exc)}
     except ConnectionError as exc:
-        logger.warning("register_vps 失败 ip=%s status=failed", ip)
+        logger.warning("连接失败：未知错误（ip=%s）", ip)
         return {"status": "failed", "message": str(exc)}
 
     # ③ 基础信息入库
@@ -88,7 +89,7 @@ def register_vps(
         session.add(record)
 
     logger.info(
-        "register_vps 基础入库完成 ip=%s os=%s %s，下一步装 xray",
+        "VPS 基础信息已存入数据库：ip=%s 系统是 %s %s，接下来去装 xray",
         ip, info["os_name"], info["os_version"],
     )
 
@@ -98,7 +99,7 @@ def register_vps(
     # ⑤ 合成最终返回
     if xray_result["status"] in ("ok", "imported", "already_running"):
         logger.info(
-            "register_vps 全流程成功 ip=%s os=%s %s xray=%s",
+            "VPS 完整登记完成：ip=%s 系统是 %s %s，xray 状态=%s",
             ip, info["os_name"], info["os_version"], xray_result["status"],
         )
         return {
@@ -110,7 +111,7 @@ def register_vps(
 
     # xray 部分失败时，VPS 已入库但 xray_status 是失败态
     logger.warning(
-        "register_vps 注册成功但 xray 流程异常 ip=%s xray_status=%s",
+        "VPS 已登记成功，但 xray 流程出问题了：ip=%s xray 状态=%s（可以单独跑 xrayinit 重试）",
         ip, xray_result["status"],
     )
     return {
