@@ -66,6 +66,11 @@ SSH_CONNECT_TIMEOUT = 10
 SSH_EXECUTE_TIMEOUT = 30
 SSH_DEFAULT_PORT = 22
 
+# 老服务器（CentOS 7 + OpenSSH 7.4 + fail2ban）对频繁开 channel 不友好，
+# execute_command 失败时退避重试。3 次尝试，间隔 0.25 / 1 / 2 秒。
+SSH_EXECUTE_RETRY_ATTEMPTS = 3
+SSH_EXECUTE_RETRY_BACKOFF = (0.25, 1.0, 2.0)
+
 
 # ============================================================
 # xray 相关常量

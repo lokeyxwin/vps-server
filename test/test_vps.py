@@ -180,6 +180,79 @@ class TestExecuteCommandMocked(unittest.TestCase):
             execute_command(client, "ls")
         self.assertEqual(str(ctx.exception), EXECUTE_ERROR_MESSAGE)
 
+    # ---------- 老服务器兼容：channel 失败退避重试 ----------
+
+    def _stdout_for(self, data: bytes, exit_code: int = 0) -> tuple:
+        """构造一个能 reading 的 (stdin, stdout, stderr) 三元组。"""
+        stdout = MagicMock()
+        stdout.read.return_value = data
+        stdout.channel.recv_exit_status.return_value = exit_code
+        stderr = MagicMock()
+        stderr.read.return_value = b""
+        return (MagicMock(), stdout, stderr)
+
+    @patch("core.ssh.time.sleep")  # 跳过实际 sleep 让测试秒过
+    def test_retry_recovers_after_ssh_exception(self, mock_sleep):
+        """首次 SSHException → 退避重试 → 第二次成功（老服务器典型行为）。"""
+        import paramiko
+        client = MagicMock()
+        client.exec_command.side_effect = [
+            paramiko.SSHException("Timeout opening channel"),
+            self._stdout_for(b"recovered\n", exit_code=0),
+        ]
+        result = execute_command(client, "ss -tln")
+        self.assertEqual(result["stdout"], "recovered\n")
+        self.assertEqual(result["exit_code"], 0)
+        self.assertEqual(client.exec_command.call_count, 2)
+        mock_sleep.assert_called_once_with(0.25)  # 第 1 次失败 → 250ms 退避
+
+    @patch("core.ssh.time.sleep")
+    def test_retry_3_times_all_fail(self, mock_sleep):
+        """3 次都 SSHException → 抛 RuntimeError，sleep 调 2 次（1/2 之后才 retry）。"""
+        import paramiko
+        client = MagicMock()
+        client.exec_command.side_effect = paramiko.SSHException("Timeout opening channel")
+        with self.assertRaises(RuntimeError):
+            execute_command(client, "ss -tln")
+        self.assertEqual(client.exec_command.call_count, 3)
+        # 第 1 次失败 → sleep(0.25)；第 2 次失败 → sleep(1.0)；第 3 次失败直接抛
+        self.assertEqual(mock_sleep.call_count, 2)
+
+    @patch("core.ssh.time.sleep")
+    def test_retry_handles_oserror(self, mock_sleep):
+        """OSError（含 ConnectionResetError / BrokenPipeError）也走重试。"""
+        client = MagicMock()
+        client.exec_command.side_effect = [
+            ConnectionResetError("connection reset by peer"),
+            self._stdout_for(b"recovered\n"),
+        ]
+        result = execute_command(client, "ls")
+        self.assertEqual(result["stdout"], "recovered\n")
+        self.assertEqual(client.exec_command.call_count, 2)
+
+    @patch("core.ssh.time.sleep")
+    def test_retry_handles_socket_timeout(self, mock_sleep):
+        """socket.timeout 也走重试。"""
+        import socket
+        client = MagicMock()
+        client.exec_command.side_effect = [
+            socket.timeout("read timed out"),
+            self._stdout_for(b"ok\n"),
+        ]
+        result = execute_command(client, "ls")
+        self.assertEqual(result["stdout"], "ok\n")
+
+    @patch("core.ssh.time.sleep")
+    def test_non_retriable_exception_short_circuits(self, mock_sleep):
+        """ValueError 这种非通信类异常不该重试，立刻抛 RuntimeError。"""
+        client = MagicMock()
+        client.exec_command.side_effect = ValueError("bad command")
+        with self.assertRaises(RuntimeError):
+            execute_command(client, "ls")
+        # 只调一次，不 retry
+        self.assertEqual(client.exec_command.call_count, 1)
+        mock_sleep.assert_not_called()
+
 
 class TestGetSystemInfoMocked(unittest.TestCase):
     def _make_client_with_outputs(self, outputs: dict):

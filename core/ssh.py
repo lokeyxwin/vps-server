@@ -5,6 +5,7 @@
 
 import contextlib
 import socket
+import time
 
 import paramiko
 
@@ -121,6 +122,16 @@ def close_server(client: paramiko.SSHClient) -> None:
         client.close()
 
 
+# channel/IO 层失败类型：这些错老服务器（CentOS 7 + OpenSSH 7.4 + fail2ban）
+# 在频繁开 channel 时偶现，退避重试通常能恢复
+_RETRIABLE_EXC = (
+    paramiko.SSHException,         # "Timeout opening channel" / "No existing session" 等
+    socket.timeout,
+    TimeoutError,
+    OSError,                       # 含 ConnectionResetError / BrokenPipeError
+)
+
+
 def execute_command(
     client: paramiko.SSHClient, command: str, timeout: int = config.SSH_EXECUTE_TIMEOUT
 ) -> dict:
@@ -130,16 +141,47 @@ def execute_command(
     长任务（如装软件）可以传更大值，比如 120。
 
     返回 {"stdout": str, "stderr": str, "exit_code": int}。
-    执行通道异常时抛 RuntimeError。
+
+    老服务器兼容：channel/socket 层错（SSHException / socket.timeout /
+    OSError）退避重试 SSH_EXECUTE_RETRY_ATTEMPTS 次，间隔按
+    SSH_EXECUTE_RETRY_BACKOFF。AuthenticationException 类不可重试错直接抛。
+    所有重试失败后统一抛 RuntimeError。
     """
-    try:
-        stdin, stdout, stderr = client.exec_command(command, timeout=timeout)
-        out = stdout.read().decode("utf-8", errors="replace")
-        err = stderr.read().decode("utf-8", errors="replace")
-        exit_code = stdout.channel.recv_exit_status()
-        return {"stdout": out, "stderr": err, "exit_code": exit_code}
-    except Exception as exc:  # noqa: BLE001 — 兜底未分类异常并转换为业务错误
-        raise RuntimeError(EXECUTE_ERROR_MESSAGE) from exc
+    attempts = config.SSH_EXECUTE_RETRY_ATTEMPTS
+    backoff = config.SSH_EXECUTE_RETRY_BACKOFF
+    last_exc: Exception | None = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            stdin, stdout, stderr = client.exec_command(command, timeout=timeout)
+            out = stdout.read().decode("utf-8", errors="replace")
+            err = stderr.read().decode("utf-8", errors="replace")
+            exit_code = stdout.channel.recv_exit_status()
+            return {"stdout": out, "stderr": err, "exit_code": exit_code}
+        except _RETRIABLE_EXC as exc:
+            last_exc = exc
+            if attempt < attempts:
+                delay = backoff[min(attempt - 1, len(backoff) - 1)]
+                logger.warning(
+                    "execute_command: attempt %d/%d failed (%s: %s), retry in %.2fs",
+                    attempt, attempts, type(exc).__name__, exc, delay,
+                )
+                time.sleep(delay)
+                continue
+            logger.error(
+                "execute_command: all %d attempts failed (last %s: %s)",
+                attempts, type(exc).__name__, exc,
+            )
+            raise RuntimeError(EXECUTE_ERROR_MESSAGE) from exc
+        except Exception as exc:  # noqa: BLE001 — 非可重试异常直接转 RuntimeError
+            logger.error(
+                "execute_command: non-retriable failure (%s: %s)",
+                type(exc).__name__, exc,
+            )
+            raise RuntimeError(EXECUTE_ERROR_MESSAGE) from exc
+
+    # 防御性：循环正常退出按理不该到这里（要么 return 要么 raise）
+    raise RuntimeError(EXECUTE_ERROR_MESSAGE) from last_exc
 
 
 def upload_file(client: paramiko.SSHClient, local_path: str, remote_path: str) -> None:
