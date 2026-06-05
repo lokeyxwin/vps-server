@@ -13,7 +13,10 @@ from ip.atom import (
     SUPPORTED_PROTOCOLS,
     UnsupportedProtocolError,
     UNSUPPORTED_PROTOCOL_MESSAGE,
+    PortConflictError,
+    PORT_CONFLICTS_WITH_DEFAULT_MESSAGE,
     build_proxy_outbound,
+    build_deploy_config,
 )
 
 
@@ -23,5 +26,8 @@ __all__ = [
     "SUPPORTED_PROTOCOLS",
     "UnsupportedProtocolError",
     "UNSUPPORTED_PROTOCOL_MESSAGE",
+    "PortConflictError",
+    "PORT_CONFLICTS_WITH_DEFAULT_MESSAGE",
     "build_proxy_outbound",
+    "build_deploy_config",
 ]
