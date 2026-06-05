@@ -256,6 +256,8 @@ def test_internal_socks(
     port: int = config.XRAY_DEFAULT_PORT,
     test_url: str = config.CONNECTIVITY_TEST_URL,
     timeout: int = config.CONNECTIVITY_TEST_TIMEOUT,
+    user: str = "",
+    pwd: str = "",
 ) -> dict:
     """在服务器内部测试 xray socks5 是否真的能转发请求。
 
@@ -263,11 +265,22 @@ def test_internal_socks(
     跟外部 ping 互补：内部通＝服务器/xray/config 都正常；
     外部不通＝防火墙或云服务商安全组拦截。
 
+    user/pwd：
+    - 都空 → 走 noauth 模式（用于测 default-direct 这种无账密 inbound）
+    - 非空 → curl 用 socks5h://user:pwd@host:port 形式带账密
+            （用于测 rgIP 部署的账密 inbound）
+
     返回 {"ok": bool, "http_code": int|None, "body": str, "error": str|None}
     """
+    # 选 socks5 URL 形式：带 auth 走 socks5h URL，无 auth 走 --socks5 host:port
+    if user or pwd:
+        # 用 -x 而不是 --socks5（后者不接受 user:pwd@... 语法）
+        proxy_arg = f"-x 'socks5h://{user}:{pwd}@127.0.0.1:{port}'"
+    else:
+        proxy_arg = f"--socks5 127.0.0.1:{port}"
     # 一行 curl，输出 "HTTP_CODE|BODY" 方便解析
     cmd = (
-        f"curl --socks5 127.0.0.1:{port} -m {timeout} -s "
+        f"curl {proxy_arg} -m {timeout} -s "
         f"-w '__HTTPCODE__%{{http_code}}' -o /tmp/_xray_internal_test.out "
         f"{test_url} 2>&1 ; "
         f"echo '__BODY__' ; cat /tmp/_xray_internal_test.out 2>/dev/null ; "

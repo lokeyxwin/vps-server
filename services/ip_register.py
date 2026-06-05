@@ -195,9 +195,11 @@ def register_ip(
                 logger.warning("xray 配置应用失败：%s", exc)
                 return {"status": "failed", "message": str(exc)}
 
-            # ⑧ 内 ping
+            # ⑧ 内 ping（带 inbound 账密——rgIP 部署的 inbound 是 auth=password）
             logger.info("内部 ping：从服务器内走 vps_port=%s 出去", vps_port)
-            internal_ping = xm.test_internal_socks(port=vps_port)
+            internal_ping = xm.test_internal_socks(
+                port=vps_port, user=inbound_user, pwd=inbound_pwd,
+            )
             logger.info(
                 "内部 ping 结果：通=%s http=%s 实测出口=%s",
                 internal_ping["ok"],

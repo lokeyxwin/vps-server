@@ -102,9 +102,16 @@ class XrayManager:
             return []
         return xc.extract_port_bindings(xc.read_config(self.client))
 
-    def test_internal_socks(self, port: int = xc.DEFAULT_PORT) -> dict:
-        """在服务器内部测试 socks5 代理（默认 18440）。返回结果字典。"""
-        return service.test_internal_socks(self.client, port=port)
+    def test_internal_socks(
+        self, port: int = xc.DEFAULT_PORT, user: str = "", pwd: str = "",
+    ) -> dict:
+        """在服务器内部测试 socks5 代理。
+
+        port: 测哪个 inbound（默认 18440 = default-direct noauth）
+        user/pwd: 该 inbound 的 socks5 账密；rgIP 部署的端口需要传，
+                 default-direct (18440) 是 noauth 留空即可
+        """
+        return service.test_internal_socks(self.client, port=port, user=user, pwd=pwd)
 
     # -------- 复合动作：给 binding 类业务（rgIP / 巡检 / admin MCP）一行调 --------
 
