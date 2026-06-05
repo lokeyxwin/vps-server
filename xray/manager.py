@@ -147,6 +147,47 @@ class XrayManager:
         )
         return new_config
 
+    def replace_proxy_binding(
+        self,
+        vps_port: int,
+        proxy_outbound: dict,
+        inbound_user: str,
+        inbound_pwd: str,
+    ) -> dict:
+        """原地替换某 vps_port 上的 binding（先 remove 旧的，再 add 新的）。
+
+        使用场景：proxy_record 里 vps_port 已被 expired IP 占着，新 IP 要顶替这个端口。
+        xray config 里该 vps_port 对应的旧三件套（client-{port} inbound + 旧 outbound
+        + 旧 routing 规则）会被完整替换为新三件套。
+
+        编排：read_config → remove_proxy_binding → add_proxy_binding
+              → upload_config → validate_config → reload
+
+        幂等：如果 vps_port 当前在 config 里不存在（remove 静默 noop），效果等同纯 add。
+
+        参数同 apply_proxy_binding。
+        返回追加后的完整 config dict（业务备份用）。
+
+        抛错（同 apply_proxy_binding：透传 atom 错误，业务侧捕获转 status）。
+        """
+        logger.info(
+            "XrayManager.replace_proxy_binding: vps_port=%s new_outbound_tag=%s → replacing",
+            vps_port, proxy_outbound.get("tag", "?"),
+        )
+        current = xc.read_config(self.client)
+        after_remove = xc.remove_proxy_binding(current, vps_port)
+        new_config = xc.add_proxy_binding(
+            after_remove, vps_port, proxy_outbound, inbound_user, inbound_pwd,
+        )
+        xc.upload_config(self.client, new_config)
+        xc.validate_config(self.client)
+        service.reload(self.client)
+        logger.info(
+            "XrayManager.replace_proxy_binding: vps_port=%s → ok",
+            vps_port,
+        )
+        return new_config
+
     def rollback_proxy_binding(self, vps_port: int, last_config: dict) -> None:
         """撤回一组 binding：从 last_config 删 + 上传 + reload。
 

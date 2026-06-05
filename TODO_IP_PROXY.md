@@ -387,6 +387,22 @@ else:
 → **user MCP 永远不查 ip_record**，只 JOIN `proxy_record` + `vps_record`。
 → inbound_pwd 解密只发给真实下游使用，不写日志。
 
+### 7.2.1 查询工具（user MCP 时再做，**不是业务**）
+
+> 标记位置：跟 rgIP 区分清楚。一个 SELECT 不算业务，不要建 `services/ip_query.py`。
+
+需求场景：
+- 用户说"我这条 IP 是不是已经登记了"
+- 用户说"给我列出所有美国 + 未过期的代理"
+- 用户说"哪些 IP 下周到期，提前提醒"
+
+实现选项（到 MCP 阶段再选）：
+1. **简单查 1 条**：CLI 子命令里 4-5 行 ORM 查询完事（`getip`）
+2. **跨表跨条件聚合**：那时候才升格成 `services/ip_query.py::find_ips(filter)`，因为有决策分支 / 跨表 JOIN / 时间窗口逻辑
+
+⚠️ **现在不写**，rgIP 业务本身在 duplicate / expired_exists / ok_renewed 三个分支
+返回的 `existing` 字段已经满足"这条 IP 查询一下"的需求——属于业务副产品而非独立工具。
+
 ### 7.3 用户查询 API（设想）
 
 ```python

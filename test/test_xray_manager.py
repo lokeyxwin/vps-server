@@ -283,6 +283,120 @@ class TestApplyProxyBinding(unittest.TestCase):
         mock_reload.assert_not_called()
 
 
+class TestReplaceProxyBinding(unittest.TestCase):
+    """replace_proxy_binding：read → remove → add → upload → validate → reload 编排。"""
+
+    @patch("xray.manager.service.reload")
+    @patch("xray.manager.xc.validate_config")
+    @patch("xray.manager.xc.upload_config")
+    @patch("xray.manager.xc.add_proxy_binding")
+    @patch("xray.manager.xc.remove_proxy_binding")
+    @patch("xray.manager.xc.read_config")
+    def test_happy_path_chains_six_atoms(
+        self, mock_read, mock_remove, mock_add, mock_upload, mock_validate, mock_reload
+    ):
+        current = {"inbounds": [{"tag": "default-direct"}, {"tag": "client-18443"}]}
+        after_remove = {"inbounds": [{"tag": "default-direct"}]}
+        new_config = {"inbounds": [{"tag": "default-direct"}, {"tag": "client-18443"}]}
+        mock_read.return_value = current
+        mock_remove.return_value = after_remove
+        mock_add.return_value = new_config
+
+        xm = XrayManager(MagicMock())
+        proxy_outbound = {"tag": "proxy-NEW-18443"}
+        result = xm.replace_proxy_binding(
+            vps_port=18443,
+            proxy_outbound=proxy_outbound,
+            inbound_user="cu", inbound_pwd="cp",
+        )
+
+        # 6 步顺序对
+        mock_read.assert_called_once_with(xm.client)
+        mock_remove.assert_called_once_with(current, 18443)
+        mock_add.assert_called_once_with(after_remove, 18443, proxy_outbound, "cu", "cp")
+        mock_upload.assert_called_once_with(xm.client, new_config)
+        mock_validate.assert_called_once_with(xm.client)
+        mock_reload.assert_called_once_with(xm.client)
+
+        # 透传：返回 add 后的 config
+        self.assertEqual(result, new_config)
+
+    @patch("xray.manager.service.reload")
+    @patch("xray.manager.xc.validate_config")
+    @patch("xray.manager.xc.upload_config")
+    @patch("xray.manager.xc.add_proxy_binding")
+    @patch("xray.manager.xc.remove_proxy_binding")
+    @patch("xray.manager.xc.read_config")
+    def test_idempotent_when_port_absent(
+        self, mock_read, mock_remove, mock_add, mock_upload, mock_validate, mock_reload
+    ):
+        """port 当前不在 config 里 → remove 静默 noop（返回原样），add 仍能成功。"""
+        current = {"inbounds": [{"tag": "default-direct"}]}
+        mock_read.return_value = current
+        mock_remove.return_value = current  # noop
+        new_config = {"inbounds": [{"tag": "default-direct"}, {"tag": "client-18443"}]}
+        mock_add.return_value = new_config
+
+        xm = XrayManager(MagicMock())
+        result = xm.replace_proxy_binding(
+            vps_port=18443,
+            proxy_outbound={"tag": "proxy-NEW-18443"},
+            inbound_user="cu", inbound_pwd="cp",
+        )
+        self.assertEqual(result, new_config)
+
+    @patch("xray.manager.service.reload")
+    @patch("xray.manager.xc.validate_config")
+    @patch("xray.manager.xc.upload_config")
+    @patch("xray.manager.xc.add_proxy_binding")
+    @patch("xray.manager.xc.remove_proxy_binding")
+    @patch("xray.manager.xc.read_config")
+    def test_add_failure_short_circuits(
+        self, mock_read, mock_remove, mock_add, mock_upload, mock_validate, mock_reload
+    ):
+        """add 阶段抛错 → upload / validate / reload 都不该跑。"""
+        from xray import OutboundTagConflictError
+        mock_read.return_value = {}
+        mock_remove.return_value = {}
+        mock_add.side_effect = OutboundTagConflictError("tag collision")
+
+        xm = XrayManager(MagicMock())
+        with self.assertRaises(OutboundTagConflictError):
+            xm.replace_proxy_binding(
+                vps_port=18443,
+                proxy_outbound={"tag": "proxy-NEW-18443"},
+                inbound_user="cu", inbound_pwd="cp",
+            )
+        mock_upload.assert_not_called()
+        mock_validate.assert_not_called()
+        mock_reload.assert_not_called()
+
+    @patch("xray.manager.service.reload")
+    @patch("xray.manager.xc.validate_config")
+    @patch("xray.manager.xc.upload_config")
+    @patch("xray.manager.xc.add_proxy_binding")
+    @patch("xray.manager.xc.remove_proxy_binding")
+    @patch("xray.manager.xc.read_config")
+    def test_validate_failure_does_not_reload(
+        self, mock_read, mock_remove, mock_add, mock_upload, mock_validate, mock_reload
+    ):
+        from xray import ConfigValidationError
+        mock_read.return_value = {}
+        mock_remove.return_value = {}
+        mock_add.return_value = {"inbounds": []}
+        mock_validate.side_effect = ConfigValidationError("bad syntax")
+
+        xm = XrayManager(MagicMock())
+        with self.assertRaises(ConfigValidationError):
+            xm.replace_proxy_binding(
+                vps_port=18443,
+                proxy_outbound={"tag": "proxy-NEW-18443"},
+                inbound_user="cu", inbound_pwd="cp",
+            )
+        mock_upload.assert_called_once()
+        mock_reload.assert_not_called()
+
+
 class TestRollbackProxyBinding(unittest.TestCase):
     """rollback_proxy_binding：remove → upload → reload 编排。"""
 
