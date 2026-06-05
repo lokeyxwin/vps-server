@@ -14,14 +14,17 @@ from xray import (
     version,
     stop,
     disable,
+    reload,
     INSTALL_COMMAND,
     UNINSTALL_COMMAND,
     XRAY_INSTALL_FAILED_MESSAGE,
     XRAY_SERVICE_STOP_FAILED_MESSAGE,
     XRAY_DISABLE_FAILED_MESSAGE,
+    XRAY_RELOAD_FAILED_MESSAGE,
     InstallFailedError,
     StopFailedError,
     DisableFailedError,
+    ReloadFailedError,
 )
 
 
@@ -134,6 +137,24 @@ class TestXrayMocked(unittest.TestCase):
         with self.assertRaises(DisableFailedError) as ctx:
             disable(MagicMock())
         self.assertIn(XRAY_DISABLE_FAILED_MESSAGE, str(ctx.exception))
+
+    # ---------- reload ----------
+
+    @patch("xray.service.execute_command")
+    def test_reload_success(self, mock_exec):
+        mock_exec.return_value = {"stdout": "", "stderr": "", "exit_code": 0}
+        reload(MagicMock())
+        mock_exec.assert_called_once_with(unittest.mock.ANY, "systemctl reload xray")
+
+    @patch("xray.service.execute_command")
+    def test_reload_failure_raises(self, mock_exec):
+        mock_exec.return_value = {
+            "stdout": "", "stderr": "Job failed: invalid config", "exit_code": 1
+        }
+        with self.assertRaises(ReloadFailedError) as ctx:
+            reload(MagicMock())
+        self.assertIn(XRAY_RELOAD_FAILED_MESSAGE, str(ctx.exception))
+        self.assertIn("invalid config", str(ctx.exception))
 
 
 if __name__ == "__main__":

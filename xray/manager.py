@@ -72,6 +72,9 @@ class XrayManager:
     def disable(self) -> None:
         service.disable(self.client)
 
+    def reload(self) -> None:
+        service.reload(self.client)
+
     # -------- 配置层（代理到 xray.config）--------
 
     def is_config_blank(self) -> bool:

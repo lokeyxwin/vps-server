@@ -79,6 +79,15 @@ XRAY_DISABLE_FAILED_MESSAGE = (
     "常见原因：用户无 root 权限 / 服务单元已损坏。"
     "建议：登录服务器跑 `systemctl disable xray` 看具体错误。"
 )
+XRAY_RELOAD_FAILED_MESSAGE = (
+    "systemctl reload xray 失败（无法让 xray 重新加载配置）。"
+    "常见原因："
+    "① config.json 语法错误（新配置 reload 不进去）；"
+    "② 服务当前未运行（reload 一个 inactive 服务会失败）；"
+    "③ 用户无 root 权限。"
+    "建议：登录服务器跑 `xray test -confdir /usr/local/etc/xray/` 校验配置语法；"
+    "再跑 `systemctl status xray --no-pager -l` 看状态。"
+)
 
 
 # ============================================================
@@ -116,6 +125,10 @@ class StopFailedError(XrayError):
 
 class DisableFailedError(XrayError):
     code = "disable_failed"
+
+
+class ReloadFailedError(XrayError):
+    code = "reload_failed"
 
 
 # ============================================================
@@ -208,6 +221,23 @@ def disable(client: paramiko.SSHClient) -> None:
     if result["exit_code"] != 0:
         raise DisableFailedError(
             f"{XRAY_DISABLE_FAILED_MESSAGE}: exit={result['exit_code']} "
+            f"stderr={result['stderr'][:200]}"
+        )
+
+
+def reload(client: paramiko.SSHClient) -> None:
+    """让 xray 重新加载 config（systemctl reload xray）。
+
+    xray 官方 systemd 单元配了 ExecReload=SIGHUP，标准 reload 即生效，
+    不打断现有连接。改完 config.json 后业务层调一次本函数让新配置上线。
+
+    失败抛 ReloadFailedError；常见原因是新 config 语法错误，
+    业务层应该在 reload 前先 validate_config。
+    """
+    result = execute_command(client, "systemctl reload xray")
+    if result["exit_code"] != 0:
+        raise ReloadFailedError(
+            f"{XRAY_RELOAD_FAILED_MESSAGE}: exit={result['exit_code']} "
             f"stderr={result['stderr'][:200]}"
         )
 
