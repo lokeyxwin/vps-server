@@ -52,6 +52,8 @@ class VPSRecord(Base):
     os_version: Mapped[str] = mapped_column(String(32), default="")
 
     expire_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # 1=可用 / 0=过期；巡检模块维护，业务层挑 VPS 时读这个 + 兜底比 expire_date
+    is_active: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     # ---------- xray 生命周期 ----------
     xray_status: Mapped[str] = mapped_column(

@@ -160,6 +160,34 @@ class TestVPSRecordModel(unittest.TestCase):
         self.assertEqual(XrayStatus.STOPPED, "stopped")
         self.assertEqual(XrayStatus.UNINSTALLED, "uninstalled")
 
+    def test_default_is_active_is_1(self):
+        """新登记的 VPS 默认可用。"""
+        with session_scope() as s:
+            s.add(VPSRecord.from_form(
+                ip="100.100.100.150", username="root", password="x", port=22
+            ))
+
+        with session_scope() as s:
+            rec = s.query(VPSRecord).filter_by(ip="100.100.100.150").one()
+            self.assertEqual(rec.is_active, 1)
+
+    def test_is_active_can_transition_to_0(self):
+        """VPS 过期场景：业务层把 is_active 改成 0。"""
+        with session_scope() as s:
+            s.add(VPSRecord.from_form(
+                ip="100.100.100.151", username="root", password="x", port=22
+            ))
+
+        with session_scope() as s:
+            rec = s.query(VPSRecord).filter_by(ip="100.100.100.151").one()
+            rec.is_active = 0
+
+        with session_scope() as s:
+            self.assertEqual(
+                s.query(VPSRecord).filter_by(ip="100.100.100.151").one().is_active,
+                0,
+            )
+
     def test_repr_does_not_leak_password(self):
         record = VPSRecord.from_form(
             ip="1.2.3.4", username="root", password="SuperSecret", port=22
