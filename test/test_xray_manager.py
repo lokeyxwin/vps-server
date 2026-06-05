@@ -165,5 +165,40 @@ class TestEnsureInstalledAndRunning(unittest.TestCase):
         self.assertTrue(result["was_already_installed"])
 
 
+class TestImportExistingBindings(unittest.TestCase):
+    """XrayManager.import_existing_bindings：is_config_blank 短路 + read+extract 组合。"""
+
+    @patch("xray.manager.xc.is_config_blank")
+    def test_blank_config_returns_empty_list_short_circuit(self, mock_blank):
+        """config 空时短路：根本不读文件。"""
+        mock_blank.return_value = True
+        xm = XrayManager(MagicMock())
+        # 同时 patch 一下 read_config 看它有没有被叫
+        with patch("xray.manager.xc.read_config") as mock_read:
+            result = xm.import_existing_bindings()
+            self.assertEqual(result, [])
+            mock_read.assert_not_called()
+
+    @patch("xray.manager.xc.extract_port_bindings")
+    @patch("xray.manager.xc.read_config")
+    @patch("xray.manager.xc.is_config_blank")
+    def test_config_present_delegates_read_then_extract(
+        self, mock_blank, mock_read, mock_extract
+    ):
+        """有 config 时：read_config → extract_port_bindings 串联。"""
+        mock_blank.return_value = False
+        mock_read.return_value = {"inbounds": ["fake"]}
+        mock_extract.return_value = [{"port": 18443, "egress_ip": "1.2.3.4"}]
+
+        xm = XrayManager(MagicMock())
+        result = xm.import_existing_bindings()
+
+        # 编排正确性
+        mock_read.assert_called_once_with(xm.client)
+        mock_extract.assert_called_once_with({"inbounds": ["fake"]})
+        # 透传
+        self.assertEqual(result, [{"port": 18443, "egress_ip": "1.2.3.4"}])
+
+
 if __name__ == "__main__":
     unittest.main()

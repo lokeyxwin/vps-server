@@ -89,6 +89,19 @@ class XrayManager:
     def validate_config(self) -> None:
         xc.validate_config(self.client)
 
+    def import_existing_bindings(self) -> list[dict]:
+        """复合操作：读取服务器现行 config + 抽出"已部署的客户端 inbound 绑定"列表。
+
+        空 config / 文件缺失 → 返回 []（避免无谓的 read_config）
+        有 config → read_config + extract_port_bindings 一气呵成
+
+        业务用法：vps_init 重装时，需要把已挂在 xray 上的代理出口端口"扣掉"
+        免得当成空闲重新分配；同时把这些绑定信息抄录到 proxy 表。
+        """
+        if xc.is_config_blank(self.client):
+            return []
+        return xc.extract_port_bindings(xc.read_config(self.client))
+
     def test_internal_socks(self, port: int = xc.DEFAULT_PORT) -> dict:
         """在服务器内部测试 socks5 代理（默认 18440）。返回结果字典。"""
         return service.test_internal_socks(self.client, port=port)
