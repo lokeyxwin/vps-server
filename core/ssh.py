@@ -74,41 +74,74 @@ def connect_server(
 
     失败时抛 ConnectionError 子类（AuthFailedError / ConnectTimeoutError /
     ConnectRefusedError），其他未分类异常抛 ConnectionError。
+
+    老服务器兼容（CentOS 7 + OpenSSH 7.4 + fail2ban）：
+    - SSHException（如 "No existing session" 服务器握手中断）退避重试
+    - 间隔 SSH_CONNECT_RETRY_BACKOFF，最多 SSH_CONNECT_RETRY_ATTEMPTS 次
+    - AuthFailedError / TimeoutError / RefusedError 不重试（性质明确，重试无意义）
     """
-    logger.info("connect_server: ip=%s port=%s user=%s → connecting...", ip, port, username)
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    try:
-        client.connect(
-            hostname=ip,
-            port=port,
-            username=username,
-            password=password,
-            timeout=config.SSH_CONNECT_TIMEOUT,
-            allow_agent=False,
-            look_for_keys=False,
+    attempts = config.SSH_CONNECT_RETRY_ATTEMPTS
+    backoff = config.SSH_CONNECT_RETRY_BACKOFF
+    last_exc: Exception | None = None
+
+    for attempt in range(1, attempts + 1):
+        logger.info(
+            "connect_server: ip=%s port=%s user=%s → connecting (attempt %d/%d)...",
+            ip, port, username, attempt, attempts,
         )
-        logger.info("connect_server: ip=%s port=%s user=%s → ok", ip, port, username)
-        return client
-    except paramiko.AuthenticationException as exc:
-        client.close()
-        logger.warning("connect_server: ip=%s user=%s → auth_failed (%s)", ip, username, exc)
-        raise AuthFailedError(AUTH_FAILED_MESSAGE) from exc
-    except (socket.timeout, TimeoutError) as exc:
-        client.close()
-        logger.warning("connect_server: ip=%s port=%s → timeout (%s)", ip, port, exc)
-        raise ConnectTimeoutError(CONNECT_TIMEOUT_MESSAGE) from exc
-    except ConnectionRefusedError as exc:
-        client.close()
-        logger.warning("connect_server: ip=%s port=%s → refused (%s)", ip, port, exc)
-        raise ConnectRefusedError(CONNECT_REFUSED_MESSAGE) from exc
-    except Exception as exc:  # noqa: BLE001 — 兜底未分类异常并转换为业务错误
-        client.close()
-        logger.error(
-            "connect_server: ip=%s port=%s → failed (type=%s reason=%s)",
-            ip, port, type(exc).__name__, exc,
-        )
-        raise ConnectionError(CONNECTION_ERROR_MESSAGE) from exc
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        try:
+            client.connect(
+                hostname=ip,
+                port=port,
+                username=username,
+                password=password,
+                timeout=config.SSH_CONNECT_TIMEOUT,
+                allow_agent=False,
+                look_for_keys=False,
+            )
+            logger.info("connect_server: ip=%s port=%s user=%s → ok", ip, port, username)
+            return client
+        except paramiko.AuthenticationException as exc:
+            client.close()
+            logger.warning("connect_server: ip=%s user=%s → auth_failed (%s)", ip, username, exc)
+            raise AuthFailedError(AUTH_FAILED_MESSAGE) from exc
+        except (socket.timeout, TimeoutError) as exc:
+            client.close()
+            logger.warning("connect_server: ip=%s port=%s → timeout (%s)", ip, port, exc)
+            raise ConnectTimeoutError(CONNECT_TIMEOUT_MESSAGE) from exc
+        except ConnectionRefusedError as exc:
+            client.close()
+            logger.warning("connect_server: ip=%s port=%s → refused (%s)", ip, port, exc)
+            raise ConnectRefusedError(CONNECT_REFUSED_MESSAGE) from exc
+        except paramiko.SSHException as exc:
+            # 老服务器握手中断 / 通道关闭等瞬态错——退避重试
+            client.close()
+            last_exc = exc
+            if attempt < attempts:
+                delay = backoff[min(attempt - 1, len(backoff) - 1)]
+                logger.warning(
+                    "connect_server: ip=%s port=%s attempt %d/%d failed (%s: %s), retry in %.2fs",
+                    ip, port, attempt, attempts, type(exc).__name__, exc, delay,
+                )
+                time.sleep(delay)
+                continue
+            logger.error(
+                "connect_server: ip=%s port=%s → all %d attempts failed (last %s: %s)",
+                ip, port, attempts, type(exc).__name__, exc,
+            )
+            raise ConnectionError(CONNECTION_ERROR_MESSAGE) from exc
+        except Exception as exc:  # noqa: BLE001 — 兜底未分类异常并转换为业务错误
+            client.close()
+            logger.error(
+                "connect_server: ip=%s port=%s → failed (type=%s reason=%s)",
+                ip, port, type(exc).__name__, exc,
+            )
+            raise ConnectionError(CONNECTION_ERROR_MESSAGE) from exc
+
+    # 防御性：循环正常退出按理不该到这里
+    raise ConnectionError(CONNECTION_ERROR_MESSAGE) from last_exc
 
 
 def close_server(client: paramiko.SSHClient) -> None:

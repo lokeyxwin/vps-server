@@ -133,6 +133,62 @@ class TestConnectErrorClassification(unittest.TestCase):
 
         self.assertEqual(verdict, "check_password")
 
+    # ---------- 老服务器兼容：SSHException 退避重试 ----------
+
+    @patch("core.ssh.time.sleep")
+    @patch("core.ssh.paramiko.SSHClient")
+    def test_ssh_exception_recovers_on_retry(self, mock_ssh_client, mock_sleep):
+        """首次 SSHException（如 "No existing session"）→ 重试第二次成功。"""
+        import paramiko as _p
+        mock_instance = MagicMock()
+        mock_instance.connect.side_effect = [
+            _p.SSHException("No existing session"),
+            None,
+        ]
+        mock_ssh_client.return_value = mock_instance
+
+        client = connect_server("1.2.3.4", "root", "pwd", 22)
+
+        self.assertIs(client, mock_instance)
+        self.assertEqual(mock_instance.connect.call_count, 2)
+        # 第一次失败 → sleep 一次（间隔 2.0s）
+        mock_sleep.assert_called_once_with(2.0)
+
+    @patch("core.ssh.time.sleep")
+    @patch("core.ssh.paramiko.SSHClient")
+    def test_ssh_exception_all_attempts_fail_raises_connection_error(
+        self, mock_ssh_client, mock_sleep,
+    ):
+        """3 次都 SSHException → 最终抛 ConnectionError 基类。"""
+        import paramiko as _p
+        mock_instance = MagicMock()
+        mock_instance.connect.side_effect = _p.SSHException("No existing session")
+        mock_ssh_client.return_value = mock_instance
+
+        with self.assertRaises(ConnectionError) as ctx:
+            connect_server("1.2.3.4", "root", "pwd", 22)
+
+        self.assertEqual(type(ctx.exception), ConnectionError)
+        self.assertEqual(str(ctx.exception), CONNECTION_ERROR_MESSAGE)
+        self.assertEqual(mock_instance.connect.call_count, 3)
+        # 失败后 sleep 调 2 次（第 3 次失败不 sleep 直接抛）
+        self.assertEqual(mock_sleep.call_count, 2)
+
+    @patch("core.ssh.time.sleep")
+    @patch("core.ssh.paramiko.SSHClient")
+    def test_auth_failure_does_not_retry(self, mock_ssh_client, mock_sleep):
+        """AuthenticationException 不重试——账密错重试无意义。"""
+        import paramiko as _p
+        mock_instance = MagicMock()
+        mock_instance.connect.side_effect = _p.AuthenticationException("auth")
+        mock_ssh_client.return_value = mock_instance
+
+        with self.assertRaises(AuthFailedError):
+            connect_server("1.2.3.4", "root", "wrong", 22)
+
+        self.assertEqual(mock_instance.connect.call_count, 1)
+        mock_sleep.assert_not_called()
+
 
 class TestCloseServerMocked(unittest.TestCase):
     def test_close_calls_client_close(self):
