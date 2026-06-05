@@ -33,7 +33,7 @@ FIREWALL_OPEN_END = config.FIREWALL_OPEN_END
 logger = get_logger(__name__)
 
 
-def install_xray_on_vps(ip: str) -> dict:
+def init_vps_xray(ip: str) -> dict:
     """在已注册的 VPS 上安装并启用 xray（含自启）。
 
     流程：
@@ -49,22 +49,22 @@ def install_xray_on_vps(ip: str) -> dict:
         auth_failed / timeout / refused / failed /
         install_failed / verify_failed / service_not_active / enable_failed
     """
-    logger.info("install_xray_on_vps 开始 ip=%s", ip)
+    logger.info("init_vps_xray 开始 ip=%s", ip)
 
     # ① ② 查 DB + 前置状态
     with session_scope() as session:
         record = session.query(VPSRecord).filter_by(ip=ip).first()
         if record is None:
-            logger.warning("install_xray_on_vps 失败 ip=%s status=not_registered", ip)
+            logger.warning("init_vps_xray 失败 ip=%s status=not_registered", ip)
             return {
                 "status": "not_registered",
                 "message": f"IP {ip} 未在数据库中。请先执行 rgvps 注册 VPS 或 rgip 注册代理。",
             }
         if record.xray_status == XrayStatus.RUNNING:
-            logger.info("install_xray_on_vps 跳过 ip=%s 原因=已 running", ip)
+            logger.info("init_vps_xray 跳过 ip=%s 原因=已 running", ip)
             return {"status": "already_running", "ip": ip, "version": record.xray_version}
         if record.xray_status == XrayStatus.INSTALLING:
-            logger.info("install_xray_on_vps 跳过 ip=%s 原因=另一进程正在安装", ip)
+            logger.info("init_vps_xray 跳过 ip=%s 原因=另一进程正在安装", ip)
             return {"status": "in_progress", "message": "另一进程正在安装中"}
 
     # ③ 标记 installing
@@ -80,7 +80,7 @@ def install_xray_on_vps(ip: str) -> dict:
             except XrayError as exc:
                 _save_failure_with_context(ip, manager, exc)
                 logger.warning(
-                    "install_xray_on_vps 失败 ip=%s status=%s", ip, exc.code,
+                    "init_vps_xray 失败 ip=%s status=%s", ip, exc.code,
                 )
                 return {"status": exc.code, "message": str(exc)}
 
@@ -88,19 +88,19 @@ def install_xray_on_vps(ip: str) -> dict:
             try:
                 fw = open_tcp_port_range(vps.client, FIREWALL_OPEN_START, FIREWALL_OPEN_END)
                 logger.info(
-                    "install_xray_on_vps 防火墙处理完成 ip=%s 防火墙=%s 范围=%d-%d",
+                    "init_vps_xray 防火墙处理完成 ip=%s 防火墙=%s 范围=%d-%d",
                     ip, fw, FIREWALL_OPEN_START, FIREWALL_OPEN_END,
                 )
             except FirewallOpenError as exc:
                 logger.warning(
-                    "install_xray_on_vps 防火墙开放失败（继续走完后续步骤）ip=%s reason=%s",
+                    "init_vps_xray 防火墙开放失败（继续走完后续步骤）ip=%s reason=%s",
                     ip, exc,
                 )
 
             # ⑥ 内部 ping：服务器内 curl localhost:18440
             internal_check = manager.test_internal_socks(port=XRAY_DEFAULT_PORT)
             logger.info(
-                "install_xray_on_vps 内部 ping ip=%s ok=%s http_code=%s body=%s",
+                "init_vps_xray 内部 ping ip=%s ok=%s http_code=%s body=%s",
                 ip, internal_check["ok"], internal_check["http_code"],
                 internal_check["body"][:60],
             )
@@ -115,30 +115,30 @@ def install_xray_on_vps(ip: str) -> dict:
                     installed_at=datetime.now(),
                 )
                 logger.warning(
-                    "install_xray_on_vps 失败 ip=%s status=internal_check_failed", ip,
+                    "init_vps_xray 失败 ip=%s status=internal_check_failed", ip,
                 )
                 return {"status": "internal_check_failed", "message": msg}
     except AuthFailedError as exc:
         _update_xray_state(ip, XrayStatus.INSTALL_FAILED, str(exc))
-        logger.warning("install_xray_on_vps 失败 ip=%s status=auth_failed", ip)
+        logger.warning("init_vps_xray 失败 ip=%s status=auth_failed", ip)
         return {"status": "auth_failed", "message": str(exc)}
     except ConnectTimeoutError as exc:
         _update_xray_state(ip, XrayStatus.INSTALL_FAILED, str(exc))
-        logger.warning("install_xray_on_vps 失败 ip=%s status=timeout", ip)
+        logger.warning("init_vps_xray 失败 ip=%s status=timeout", ip)
         return {"status": "timeout", "message": str(exc)}
     except ConnectRefusedError as exc:
         _update_xray_state(ip, XrayStatus.INSTALL_FAILED, str(exc))
-        logger.warning("install_xray_on_vps 失败 ip=%s status=refused", ip)
+        logger.warning("init_vps_xray 失败 ip=%s status=refused", ip)
         return {"status": "refused", "message": str(exc)}
     except ConnectionError as exc:
         _update_xray_state(ip, XrayStatus.INSTALL_FAILED, str(exc))
-        logger.warning("install_xray_on_vps 失败 ip=%s status=failed", ip)
+        logger.warning("init_vps_xray 失败 ip=%s status=failed", ip)
         return {"status": "failed", "message": str(exc)}
 
     # ⑦ 外部 ping：从本机走 socks5 → VPS_IP:18440
     external_check = test_socks_proxy(ip, XRAY_DEFAULT_PORT)
     logger.info(
-        "install_xray_on_vps 外部 ping ip=%s ok=%s status_code=%s body=%s",
+        "init_vps_xray 外部 ping ip=%s ok=%s status_code=%s body=%s",
         ip, external_check["ok"], external_check["status_code"],
         external_check["body"][:60],
     )
@@ -171,7 +171,7 @@ def install_xray_on_vps(ip: str) -> dict:
     )
 
     logger.info(
-        "install_xray_on_vps 完成 ip=%s status=%s version=%s actions=%s",
+        "init_vps_xray 完成 ip=%s status=%s version=%s actions=%s",
         ip, final_status, version, actions,
     )
     return {

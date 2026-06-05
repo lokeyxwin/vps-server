@@ -52,7 +52,7 @@ class TestRegisterVpsMocked(unittest.TestCase):
 
     # ---------- 三个失败路径（SSH 连接错）----------
 
-    @patch("services.vps_register.install_xray_on_vps")
+    @patch("services.vps_register.init_vps_xray")
     @patch("services.vps_register.VPSSession")
     def test_auth_failure_returns_auth_failed(self, mock_vps_cls, mock_install):
         mock_vps_cls.return_value.__enter__.side_effect = AuthFailedError(AUTH_FAILED_MESSAGE)
@@ -64,7 +64,7 @@ class TestRegisterVpsMocked(unittest.TestCase):
             self.assertEqual(s.query(VPSRecord).filter_by(ip="3.3.3.3").count(), 0)
         mock_install.assert_not_called()
 
-    @patch("services.vps_register.install_xray_on_vps")
+    @patch("services.vps_register.init_vps_xray")
     @patch("services.vps_register.VPSSession")
     def test_timeout(self, mock_vps_cls, mock_install):
         mock_vps_cls.return_value.__enter__.side_effect = ConnectTimeoutError(CONNECT_TIMEOUT_MESSAGE)
@@ -72,7 +72,7 @@ class TestRegisterVpsMocked(unittest.TestCase):
         self.assertEqual(result["status"], "timeout")
         mock_install.assert_not_called()
 
-    @patch("services.vps_register.install_xray_on_vps")
+    @patch("services.vps_register.init_vps_xray")
     @patch("services.vps_register.VPSSession")
     def test_refused(self, mock_vps_cls, mock_install):
         mock_vps_cls.return_value.__enter__.side_effect = ConnectRefusedError(CONNECT_REFUSED_MESSAGE)
@@ -81,7 +81,7 @@ class TestRegisterVpsMocked(unittest.TestCase):
 
     # ---------- 重复入库 ----------
 
-    @patch("services.vps_register.install_xray_on_vps")
+    @patch("services.vps_register.init_vps_xray")
     @patch("services.vps_register.VPSSession")
     def test_duplicate_returns_duplicate_and_skips_ssh(self, mock_vps_cls, mock_install):
         self._stub_vps_with_info(mock_vps_cls)
@@ -99,7 +99,7 @@ class TestRegisterVpsMocked(unittest.TestCase):
 
     # ---------- 成功路径 ----------
 
-    @patch("services.vps_register.install_xray_on_vps")
+    @patch("services.vps_register.init_vps_xray")
     @patch("services.vps_register.VPSSession")
     def test_success_full_flow(self, mock_vps_cls, mock_install):
         self._stub_vps_with_info(mock_vps_cls)
@@ -129,7 +129,7 @@ class TestRegisterVpsMocked(unittest.TestCase):
 
         mock_install.assert_called_once_with("1.1.1.1")
 
-    @patch("services.vps_register.install_xray_on_vps")
+    @patch("services.vps_register.init_vps_xray")
     @patch("services.vps_register.VPSSession")
     def test_provider_domain_persisted_through_register(self, mock_vps_cls, mock_install):
         """provider_domain 参数应一路透传到 DB，验证不被业务层丢弃。"""
@@ -149,7 +149,7 @@ class TestRegisterVpsMocked(unittest.TestCase):
             rec = s.query(VPSRecord).filter_by(ip="1.1.1.5").one()
             self.assertEqual(rec.provider_domain, "linode.com")
 
-    @patch("services.vps_register.install_xray_on_vps")
+    @patch("services.vps_register.init_vps_xray")
     @patch("services.vps_register.VPSSession")
     def test_provider_domain_omitted_falls_back_to_empty(self, mock_vps_cls, mock_install):
         """未传 provider_domain 时 DB 里应为空串，不污染既有用法。"""
@@ -162,7 +162,7 @@ class TestRegisterVpsMocked(unittest.TestCase):
             rec = s.query(VPSRecord).filter_by(ip="1.1.1.6").one()
             self.assertEqual(rec.provider_domain, "")
 
-    @patch("services.vps_register.install_xray_on_vps")
+    @patch("services.vps_register.init_vps_xray")
     @patch("services.vps_register.VPSSession")
     def test_imported_xray_path_also_returns_ok(self, mock_vps_cls, mock_install):
         """xray 在服务器上已装的场景，业务整体仍是 ok。"""
@@ -173,7 +173,7 @@ class TestRegisterVpsMocked(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["xray"]["status"], "imported")
 
-    @patch("services.vps_register.install_xray_on_vps")
+    @patch("services.vps_register.init_vps_xray")
     @patch("services.vps_register.VPSSession")
     def test_xray_partial_failure(self, mock_vps_cls, mock_install):
         """VPS 注册成功但 xray 流程失败 → status=ok_xray_partial。"""

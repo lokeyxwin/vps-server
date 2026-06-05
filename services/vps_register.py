@@ -4,7 +4,7 @@
     ① 查重（DB 已有 IP → duplicate）
     ② SSH 测连 + 采集系统信息（4 种错误细分：auth/timeout/refused/failed）
     ③ 入库（密码加密、xray_status='not_installed' 默认）
-    ④ 调用 install_xray_on_vps 业务把 xray 也搞定（同一函数复用）
+    ④ 调用 init_vps_xray 业务把 xray 也搞定（同一函数复用）
     ⑤ 返回最终 status
 
 入库后 xray 全流程也会跑：装 → 起 → 自启。
@@ -14,7 +14,7 @@ from datetime import date
 
 from db import VPSRecord, session_scope
 from log import get_logger
-from services.vps_install_xray import install_xray_on_vps
+from services.vps_init import init_vps_xray
 from core import (
     AuthFailedError,
     ConnectTimeoutError,
@@ -92,8 +92,8 @@ def register_vps(
         ip, info["os_name"], info["os_version"],
     )
 
-    # ④ 链式调用 install_xray_on_vps —— 复用业务，避免逻辑重复
-    xray_result = install_xray_on_vps(ip)
+    # ④ 链式调用 init_vps_xray —— 复用业务，避免逻辑重复
+    xray_result = init_vps_xray(ip)
 
     # ⑤ 合成最终返回
     if xray_result["status"] in ("ok", "imported", "already_running"):
