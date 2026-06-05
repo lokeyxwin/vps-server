@@ -226,19 +226,23 @@ def disable(client: paramiko.SSHClient) -> None:
 
 
 def reload(client: paramiko.SSHClient) -> None:
-    """让 xray 重新加载 config（systemctl reload xray）。
+    """让 xray 重新加载 config。
 
-    xray 官方 systemd 单元配了 ExecReload=SIGHUP，标准 reload 即生效，
-    不打断现有连接。改完 config.json 后业务层调一次本函数让新配置上线。
+    优先 `systemctl reload xray`（无打断，需要 unit 配 ExecReload=SIGHUP）；
+    某些 xray 装机脚本（如 666clouds 镜像）没配 ExecReload，reload 会报
+    "Job type reload is not applicable"——这种情况自动 fallback 到
+    `systemctl restart xray`（有短暂连接打断但通用）。
 
-    失败抛 ReloadFailedError；常见原因是新 config 语法错误，
-    业务层应该在 reload 前先 validate_config。
+    业务层应该在 reload 前先 validate_config，避免推坏 config 上线。
     """
-    result = execute_command(client, "systemctl reload xray")
+    # `|| restart` 兜底：reload 失败时返回非零 exit_code，
+    # `||` 触发 restart；restart 成功后整条命令 exit=0
+    cmd = "systemctl reload xray 2>&1 || systemctl restart xray"
+    result = execute_command(client, cmd)
     if result["exit_code"] != 0:
         raise ReloadFailedError(
             f"{XRAY_RELOAD_FAILED_MESSAGE}: exit={result['exit_code']} "
-            f"stderr={result['stderr'][:200]}"
+            f"stdout={result['stdout'][:120]} stderr={result['stderr'][:120]}"
         )
 
 

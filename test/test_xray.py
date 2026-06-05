@@ -144,7 +144,10 @@ class TestXrayMocked(unittest.TestCase):
     def test_reload_success(self, mock_exec):
         mock_exec.return_value = {"stdout": "", "stderr": "", "exit_code": 0}
         reload(MagicMock())
-        mock_exec.assert_called_once_with(unittest.mock.ANY, "systemctl reload xray")
+        # 现在用 `reload || restart` 兜底命令，命令字符串里两个动词都在
+        cmd = mock_exec.call_args.args[1]
+        self.assertIn("systemctl reload xray", cmd)
+        self.assertIn("systemctl restart xray", cmd)
 
     @patch("xray.service.execute_command")
     def test_reload_failure_raises(self, mock_exec):
