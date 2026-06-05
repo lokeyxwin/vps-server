@@ -61,22 +61,26 @@ from xray.config import (
     PortConflictError,
     ConfigWriteError,
     ConfigValidationError,
+    ConfigReadError,
     # 错误文案（配置相关）
     UNSUPPORTED_PROTOCOL_MESSAGE,
     PORT_CONFLICTS_WITH_DEFAULT_MESSAGE,
     CONFIG_WRITE_FAILED_MESSAGE,
     CONFIG_VALIDATION_FAILED_MESSAGE,
+    CONFIG_READ_FAILED_MESSAGE,
     # 纯函数
     generate_random_auth,
     build_proxy_outbound,
     build_vps_direct_config,
     build_proxy_relay_config,
+    extract_port_bindings,
     # SSH 操作
     get_config_size,
     is_config_blank,
     write_default_config,
     upload_config,
     validate_config,
+    read_config,
 )
 from xray.manager import XrayManager
 
@@ -128,17 +132,21 @@ __all__ = [
     "PortConflictError",
     "ConfigWriteError",
     "ConfigValidationError",
+    "ConfigReadError",
     "UNSUPPORTED_PROTOCOL_MESSAGE",
     "PORT_CONFLICTS_WITH_DEFAULT_MESSAGE",
     "CONFIG_WRITE_FAILED_MESSAGE",
     "CONFIG_VALIDATION_FAILED_MESSAGE",
+    "CONFIG_READ_FAILED_MESSAGE",
     "generate_random_auth",
     "build_proxy_outbound",
     "build_vps_direct_config",
     "build_proxy_relay_config",
+    "extract_port_bindings",
     "get_config_size",
     "is_config_blank",
     "write_default_config",
     "upload_config",
     "validate_config",
+    "read_config",
 ]

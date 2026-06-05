@@ -22,6 +22,7 @@ from xray.config import (
     PROTOCOL_HTTP,
     PROTOCOL_SOCKS5,
     SUPPORTED_PROTOCOLS,
+    ConfigReadError,
     ConfigValidationError,
     ConfigWriteError,
     PortConflictError,
@@ -29,7 +30,9 @@ from xray.config import (
     build_proxy_outbound,
     build_proxy_relay_config,
     build_vps_direct_config,
+    extract_port_bindings,
     generate_random_auth,
+    read_config,
     upload_config,
     validate_config,
     write_default_config,
@@ -494,6 +497,213 @@ class TestBuildProxyRelayConfig(unittest.TestCase):
             inbound_user="cu", inbound_pwd="cp",
         )
         json.dumps(out)  # 不抛即过
+
+
+# ============================================================
+# extract_port_bindings：从 config dict 反向抠出绑定信息
+# ============================================================
+
+class TestExtractPortBindings(unittest.TestCase):
+    def _make_full_config_with_one_proxy(self) -> dict:
+        """造一份典型 IP 业务部署后的 config：
+        - default-direct (18440) + freedom
+        - client-18443 (账密 socks5) → proxy-out-1（带 _meta）
+        """
+        proxy_outbound = build_proxy_outbound(
+            host="1.2.3.4", port=1080, user="up", pwd="upwd",
+            protocol=PROTOCOL_SOCKS5, tag="proxy-out-1",
+        )
+        proxy_outbound["_meta"] = {"egress_ip": "5.6.7.8", "egress_country": "US"}
+        cfg = build_proxy_relay_config(
+            vps_port=18443, proxy_outbound=proxy_outbound,
+            inbound_user="client_u", inbound_pwd="client_p",
+        )
+        # build_proxy_relay_config 内部把 client inbound tag 设为 "client-18443"
+        # routing 已正确接上 client-18443 → proxy-out-1
+        return cfg
+
+    # ---------- 跳过 default-direct ----------
+
+    def test_skips_default_direct_inbound(self):
+        cfg = build_vps_direct_config()  # 只有 default-direct
+        self.assertEqual(extract_port_bindings(cfg), [])
+
+    def test_emits_only_non_default_inbounds(self):
+        cfg = self._make_full_config_with_one_proxy()
+        bindings = extract_port_bindings(cfg)
+        self.assertEqual(len(bindings), 1)
+        self.assertEqual(bindings[0]["port"], 18443)
+
+    # ---------- inbound 字段映射 ----------
+
+    def test_protocol_reverse_mapped_to_user_name(self):
+        """xray 里写 socks，反查后是 socks5。"""
+        cfg = self._make_full_config_with_one_proxy()
+        bindings = extract_port_bindings(cfg)
+        self.assertEqual(bindings[0]["protocol"], PROTOCOL_SOCKS5)
+
+    def test_inbound_creds_extracted(self):
+        cfg = self._make_full_config_with_one_proxy()
+        bindings = extract_port_bindings(cfg)
+        self.assertEqual(bindings[0]["inbound_user"], "client_u")
+        self.assertEqual(bindings[0]["inbound_pwd"], "client_p")
+
+    def test_listen_address_extracted(self):
+        cfg = self._make_full_config_with_one_proxy()
+        bindings = extract_port_bindings(cfg)
+        self.assertEqual(bindings[0]["listen_address"], "0.0.0.0")
+
+    # ---------- outbound 通过 routing 链接 ----------
+
+    def test_upstream_host_from_outbound(self):
+        cfg = self._make_full_config_with_one_proxy()
+        bindings = extract_port_bindings(cfg)
+        self.assertEqual(bindings[0]["upstream_host"], "1.2.3.4")
+
+    def test_meta_egress_ip_extracted(self):
+        cfg = self._make_full_config_with_one_proxy()
+        bindings = extract_port_bindings(cfg)
+        self.assertEqual(bindings[0]["egress_ip"], "5.6.7.8")
+
+    def test_meta_egress_country_extracted(self):
+        cfg = self._make_full_config_with_one_proxy()
+        bindings = extract_port_bindings(cfg)
+        self.assertEqual(bindings[0]["egress_country"], "US")
+
+    def test_missing_meta_returns_empty_strings(self):
+        """outbound 没有 _meta 字段（旧 config / 业务还没塞）时，egress 字段为空串。"""
+        proxy = build_proxy_outbound(
+            host="x", port=1, user="u", pwd="p",
+            protocol=PROTOCOL_SOCKS5, tag="proxy-out-1",
+        )
+        # 故意不加 _meta
+        cfg = build_proxy_relay_config(
+            vps_port=18444, proxy_outbound=proxy,
+            inbound_user="cu", inbound_pwd="cp",
+        )
+        bindings = extract_port_bindings(cfg)
+        self.assertEqual(bindings[0]["egress_ip"], "")
+        self.assertEqual(bindings[0]["egress_country"], "")
+
+    # ---------- 边界 ----------
+
+    def test_empty_config_returns_empty_list(self):
+        self.assertEqual(extract_port_bindings({}), [])
+
+    def test_config_with_only_outbounds_no_inbounds(self):
+        cfg = {"outbounds": [{"tag": "direct", "protocol": "freedom"}]}
+        self.assertEqual(extract_port_bindings(cfg), [])
+
+    def test_inbound_without_routing_rule_still_emitted(self):
+        """没有 routing 接上 outbound 的 inbound 仍出现，但 upstream 字段空。"""
+        cfg = {
+            "inbounds": [{
+                "tag": "orphan",
+                "port": 18443,
+                "listen": "0.0.0.0",
+                "protocol": "socks",
+                "settings": {"accounts": [{"user": "u", "pass": "p"}]},
+            }],
+            "outbounds": [],
+            "routing": {"rules": []},
+        }
+        bindings = extract_port_bindings(cfg)
+        self.assertEqual(len(bindings), 1)
+        self.assertEqual(bindings[0]["upstream_host"], "")
+        self.assertEqual(bindings[0]["egress_ip"], "")
+
+    def test_multiple_bindings_in_one_config(self):
+        """一台 VPS 上同时挂两个代理出口，extract 应返回两条记录。"""
+        # 手工拼一个有两条 client inbound 的 config
+        cfg = {
+            "inbounds": [
+                {
+                    "tag": "default-direct", "port": 18440, "listen": "0.0.0.0",
+                    "protocol": "socks", "settings": {"auth": "noauth"},
+                },
+                {
+                    "tag": "client-18443", "port": 18443, "listen": "0.0.0.0",
+                    "protocol": "socks",
+                    "settings": {"accounts": [{"user": "u1", "pass": "p1"}]},
+                },
+                {
+                    "tag": "client-18445", "port": 18445, "listen": "0.0.0.0",
+                    "protocol": "http",
+                    "settings": {"accounts": [{"user": "u2", "pass": "p2"}]},
+                },
+            ],
+            "outbounds": [
+                {"tag": "direct", "protocol": "freedom"},
+                {
+                    "tag": "proxy-A", "protocol": "socks",
+                    "settings": {"servers": [{"address": "a.example.com", "port": 1080}]},
+                    "_meta": {"egress_ip": "1.1.1.1", "egress_country": "JP"},
+                },
+                {
+                    "tag": "proxy-B", "protocol": "http",
+                    "settings": {"servers": [{"address": "b.example.com", "port": 8080}]},
+                    "_meta": {"egress_ip": "2.2.2.2", "egress_country": "DE"},
+                },
+            ],
+            "routing": {
+                "rules": [
+                    {"inboundTag": ["default-direct"], "outboundTag": "direct"},
+                    {"inboundTag": ["client-18443"], "outboundTag": "proxy-A"},
+                    {"inboundTag": ["client-18445"], "outboundTag": "proxy-B"},
+                ],
+            },
+        }
+        bindings = extract_port_bindings(cfg)
+        self.assertEqual(len(bindings), 2)
+
+        by_port = {b["port"]: b for b in bindings}
+        self.assertEqual(by_port[18443]["protocol"], "socks5")
+        self.assertEqual(by_port[18443]["upstream_host"], "a.example.com")
+        self.assertEqual(by_port[18443]["egress_country"], "JP")
+        self.assertEqual(by_port[18445]["protocol"], "http")
+        self.assertEqual(by_port[18445]["upstream_host"], "b.example.com")
+        self.assertEqual(by_port[18445]["egress_country"], "DE")
+
+
+# ============================================================
+# read_config：SFTP 拉 + JSON parse
+# ============================================================
+
+class TestReadConfig(unittest.TestCase):
+    @patch("xray.config.execute_command")
+    def test_empty_file_returns_empty_dict(self, mock_exec):
+        """空 config（刚装好 / x-ui 未配）→ {} 而非抛错。"""
+        mock_exec.return_value = {"stdout": "", "stderr": "", "exit_code": 0}
+        self.assertEqual(read_config(MagicMock()), {})
+
+    @patch("xray.config.execute_command")
+    def test_whitespace_only_returns_empty(self, mock_exec):
+        mock_exec.return_value = {"stdout": "  \n  \n", "stderr": "", "exit_code": 0}
+        self.assertEqual(read_config(MagicMock()), {})
+
+    @patch("xray.config.execute_command")
+    def test_valid_json_parsed_to_dict(self, mock_exec):
+        sample = build_vps_direct_config()
+        mock_exec.return_value = {
+            "stdout": json.dumps(sample), "stderr": "", "exit_code": 0,
+        }
+        self.assertEqual(read_config(MagicMock()), sample)
+
+    @patch("xray.config.execute_command")
+    def test_invalid_json_raises_config_read_error(self, mock_exec):
+        mock_exec.return_value = {
+            "stdout": "{this is not json",
+            "stderr": "", "exit_code": 0,
+        }
+        with self.assertRaises(ConfigReadError):
+            read_config(MagicMock())
+
+    @patch("xray.config.execute_command")
+    def test_cats_default_config_path(self, mock_exec):
+        mock_exec.return_value = {"stdout": "", "stderr": "", "exit_code": 0}
+        read_config(MagicMock())
+        args, _ = mock_exec.call_args
+        self.assertIn(DEFAULT_CONFIG_PATH, args[1])
 
 
 if __name__ == "__main__":

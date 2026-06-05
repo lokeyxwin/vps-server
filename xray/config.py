@@ -3,18 +3,25 @@
 本模块包含两类东西：
 
 1. 纯函数（不接 SSH / DB）：
-   - build_proxy_outbound  ← 上游代理凭据 → outbound dict 片段
-   - generate_random_auth  ← 随机账密（给客户端 inbound 用）
-   - build_vps_direct_config   ← 完整 config：VPS 自用直出（freedom outbound）
-   - build_proxy_relay_config  ← 完整 config：客户端走上游代理（代理跳转）
+   - build_proxy_outbound       ← 上游代理凭据 → outbound dict 片段
+   - generate_random_auth       ← 随机账密（给客户端 inbound 用）
+   - build_vps_direct_config    ← 完整 config：VPS 自用直出（freedom outbound）
+   - build_proxy_relay_config   ← 完整 config：客户端走上游代理（代理跳转）
+   - extract_port_bindings      ← 从 config dict 抠出每条客户端 inbound 绑定信息
 
 2. SSH 操作（接 paramiko client）：
    - get_config_size / is_config_blank
-   - write_default_config   ← 把 VPS 直出场景默认 config 写到服务器
-   - upload_config          ← 上传任意 config dict 到 DEFAULT_CONFIG_PATH
-   - validate_config        ← 跑 `xray test -c` 验证 config 语法
+   - write_default_config       ← 把 VPS 直出场景默认 config 写到服务器
+   - upload_config              ← 上传任意 config dict 到 DEFAULT_CONFIG_PATH
+   - validate_config            ← 跑 `xray test -c` 验证 config 语法
+   - read_config                ← 从服务器拉 config.json 解析成 dict
 
-xray 服务层（install/start/stop/enable/disable/...）在 xray/atom.py。
+xray 服务层（install/start/stop/enable/disable/...）在 xray/service.py。
+
+约定（业务侧扩展）：
+- outbound 的自定义元数据走 `_meta` 字典（下划线前缀=非 xray 标准字段）
+- 当前消费方：extract_port_bindings 从 `_meta` 读 egress_ip / egress_country
+- xray 自身忽略未知字段，不影响功能
 """
 
 from __future__ import annotations
@@ -83,6 +90,12 @@ CONFIG_VALIDATION_FAILED_MESSAGE = (
     "或先回滚到上一个已知能用的 config 再排查。"
 )
 
+CONFIG_READ_FAILED_MESSAGE = (
+    "从服务器读取 xray config.json 失败。"
+    "常见原因：① 文件存在但 JSON 损坏（非空但无法 parse）；② 用户无读权限。"
+    "建议：登录服务器跑 `cat /usr/local/etc/xray/config.json` 看实际内容。"
+)
+
 
 # ============================================================
 # 错误类
@@ -102,6 +115,10 @@ class ConfigWriteError(RuntimeError):
 
 class ConfigValidationError(RuntimeError):
     """xray test -c 校验 config 失败。"""
+
+
+class ConfigReadError(RuntimeError):
+    """读取 / 解析服务器上 xray config.json 失败（非"文件不存在"，那种返回 {}）。"""
 
 
 # ============================================================
@@ -287,6 +304,94 @@ def build_proxy_relay_config(
 
 
 # ============================================================
+# 纯函数：从 config dict 反向抠出端口绑定信息
+# ============================================================
+
+# xray-side protocol → 用户层 protocol 反查表（"socks" → "socks5"）
+_USER_PROTOCOL_NAME = {v: k for k, v in _XRAY_PROTOCOL_NAME.items()}
+
+
+def extract_port_bindings(config_dict: dict) -> list[dict]:
+    """从 xray config dict 抠出"每条非 default-direct 客户端 inbound"对应的绑定信息。
+
+    用途：rgvps 重装时，把已部署在 xray 里的代理出口信息抄录到 proxy 表，
+    避免把已绑定的端口当成"空闲"重新分配。
+
+    返回 list[dict]，每项含：
+        protocol         ← 还原为对外名（"socks5"/"http"），未知协议原样保留
+        listen_address   ← inbound 的 listen 字段（默认 "0.0.0.0"）
+        port             ← inbound 端口
+        inbound_user     ← settings.accounts[0].user（无认证时为 ""）
+        inbound_pwd      ← settings.accounts[0].pass（无认证时为 ""）
+        upstream_host    ← 对应 outbound 的 servers[0].address（上游入口）
+        egress_ip        ← outbound["_meta"]["egress_ip"]（业务约定字段；无则为 ""）
+        egress_country   ← outbound["_meta"]["egress_country"]（同上）
+
+    跳过 tag="default-direct" 的 inbound（VPS 自用通路）。
+    没有 routing 规则关联的 inbound 仍会出现在结果里，但 upstream/* 字段会留空。
+
+    本函数是纯字典操作，xray 不在场也能跑（方便单测）。
+    """
+    inbounds = config_dict.get("inbounds", []) or []
+    outbounds = config_dict.get("outbounds", []) or []
+    routing = config_dict.get("routing", {}) or {}
+    rules = routing.get("rules", []) or []
+
+    # 建 inbound_tag → outbound_tag 映射
+    routing_map: dict[str, str] = {}
+    for rule in rules:
+        in_tags = rule.get("inboundTag", []) or []
+        out_tag = rule.get("outboundTag", "")
+        for tag in in_tags:
+            routing_map[tag] = out_tag
+
+    # 按 tag 索引 outbound
+    outbound_by_tag = {ob.get("tag", ""): ob for ob in outbounds}
+
+    bindings: list[dict] = []
+    for inb in inbounds:
+        tag = inb.get("tag", "")
+        if tag == "default-direct":
+            continue  # 跳过 VPS 自用通路
+
+        # ----- inbound 侧 -----
+        xray_protocol = inb.get("protocol", "")
+        protocol = _USER_PROTOCOL_NAME.get(xray_protocol, xray_protocol)
+        port = inb.get("port", 0)
+        listen = inb.get("listen", "")
+
+        accounts = inb.get("settings", {}).get("accounts", []) or []
+        if accounts:
+            inbound_user = accounts[0].get("user", "")
+            inbound_pwd = accounts[0].get("pass", "")
+        else:
+            inbound_user = ""
+            inbound_pwd = ""
+
+        # ----- outbound 侧（通过 routing 找）-----
+        out_tag = routing_map.get(tag, "")
+        outbound = outbound_by_tag.get(out_tag, {})
+        servers = outbound.get("settings", {}).get("servers", []) or []
+        upstream_host = servers[0].get("address", "") if servers else ""
+        meta = outbound.get("_meta", {}) or {}
+        egress_ip = meta.get("egress_ip", "")
+        egress_country = meta.get("egress_country", "")
+
+        bindings.append({
+            "protocol": protocol,
+            "listen_address": listen,
+            "port": port,
+            "inbound_user": inbound_user,
+            "inbound_pwd": inbound_pwd,
+            "upstream_host": upstream_host,
+            "egress_ip": egress_ip,
+            "egress_country": egress_country,
+        })
+
+    return bindings
+
+
+# ============================================================
 # 兼容常量：默认 config 的 JSON 字符串形式
 # （从 build_vps_direct_config 实时算，确保跟 dict 同源；外部代码若已依赖此名仍可用）
 # ============================================================
@@ -313,6 +418,30 @@ def get_config_size(client: paramiko.SSHClient) -> int:
 def is_config_blank(client: paramiko.SSHClient) -> bool:
     """检查 config.json 是否空（缺失或 0 字节）。"""
     return get_config_size(client) == 0
+
+
+def read_config(client: paramiko.SSHClient) -> dict:
+    """从服务器读取 xray config.json，解析成 dict 返回。
+
+    返回规则：
+        - 文件不存在 / 空文件 → 返回 {}（语义"没有 config"）
+        - 文件存在且能 parse → 返回 parse 后的 dict
+        - 文件存在但 JSON 损坏 → 抛 ConfigReadError
+
+    业务调用方一般先 is_config_blank() 短路；想拿现有 inbound/outbound
+    再调 read_config。
+    """
+    # 直接 cat；用 2>/dev/null 把"找不到文件"屏蔽（按空内容处理）
+    result = execute_command(client, f"cat {DEFAULT_CONFIG_PATH} 2>/dev/null")
+    raw = result["stdout"]
+    if not raw.strip():
+        return {}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ConfigReadError(
+            f"{CONFIG_READ_FAILED_MESSAGE}: 文件存在但 JSON 解析失败 ({exc})"
+        ) from exc
 
 
 # ============================================================
