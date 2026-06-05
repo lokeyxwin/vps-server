@@ -70,8 +70,9 @@ def init_vps_xray(ip: str) -> dict:
     # ③ 标记 installing
     _update_xray_state(ip, XrayStatus.INSTALLING, "正在执行 xray 全流程")
 
-    # ④ ⑤ SSH 连 + XrayManager 高层动作 + 防火墙 + 内部 ping
+    # ④ ⑤ SSH 连 + XrayManager 高层动作 + 端口审计 + 防火墙 + 内部 ping
     internal_check = None
+    port_audit: dict | None = None
     try:
         with VPSSession.from_record(_load_record(ip)) as vps:
             manager = XrayManager(vps.client)
@@ -83,6 +84,32 @@ def init_vps_xray(ip: str) -> dict:
                     "init_vps_xray 失败 ip=%s status=%s", ip, exc.code,
                 )
                 return {"status": exc.code, "message": str(exc)}
+
+            # ⑤.4 端口审计：
+            #   a. 抄录已部署在 xray 里的客户端 inbound 绑定（rgvps 重装场景兜底）
+            #   b. 扫业务端口区间 18441-18450 的可用集合（已扣 OS 占用 + 默认排除）
+            #   ★ 当前 mock 阶段：只 log 不入库；业务跑通后再接 proxy 表 / VPS 计数字段
+            existing_bindings = manager.import_existing_bindings()
+            available_ports = vps.get_available_ports(
+                config.PROXY_PORT_RANGE_START,
+                config.PROXY_PORT_RANGE_END,
+            )
+            # 已绑定端口虽然在 ss -tln 里就会显示占用，这里冗余扣一次保险
+            available_ports -= {b["port"] for b in existing_bindings}
+
+            port_audit = {
+                "available_count": len(available_ports),
+                "available_ports": sorted(available_ports),
+                "existing_bindings": existing_bindings,
+            }
+            logger.info(
+                "init_vps_xray 端口审计 ip=%s 可用=%d/%d 已绑定=%d ports=%s",
+                ip,
+                len(available_ports),
+                config.PROXY_PORT_RANGE_END - config.PROXY_PORT_RANGE_START + 1,
+                len(existing_bindings),
+                sorted(available_ports),
+            )
 
             # ⑤.5 开服务器本地防火墙 18440-18450（best-effort，失败只警告不阻塞）
             try:
@@ -181,6 +208,7 @@ def init_vps_xray(ip: str) -> dict:
         "actions": actions,
         "internal_ping": internal_check,
         "external_ping": external_check,
+        "port_audit": port_audit,
         "message": message if final_status == "external_unreachable" else None,
     }
 

@@ -47,9 +47,11 @@ def _stub_vps_manager(mock_vps_cls, raise_exc: Exception | None = None) -> Magic
     """造一个 VPSSession.from_record(...) → with 上下文。
 
     raise_exc 不为 None 时，进入 with 块时会抛出 raise_exc。
+    默认 vps.get_available_ports 返回完整业务范围（10 个端口），无被占用。
     """
     vps_ctx = MagicMock()
     vps_ctx.client = MagicMock()
+    vps_ctx.get_available_ports.return_value = set(range(18441, 18451))
     cm = MagicMock()
     cm.__enter__ = MagicMock(side_effect=raise_exc) if raise_exc else MagicMock(return_value=vps_ctx)
     cm.__exit__ = MagicMock(return_value=False)
@@ -79,6 +81,8 @@ def _stub_xray_manager(
         }
     xray_instance.version.return_value = partial_version
     xray_instance.is_installed.return_value = partial_is_installed
+    # 默认场景：没有现存 binding（首次安装 / 默认 config）
+    xray_instance.import_existing_bindings.return_value = []
     # 内部 ping 默认通
     xray_instance.test_internal_socks.return_value = {
         "ok": internal_ok,
@@ -178,6 +182,73 @@ class TestInstallXrayMocked(unittest.TestCase):
         self.assertEqual(rec.xray_status, XrayStatus.RUNNING)
         self.assertEqual(rec.xray_version, "Xray 1.8.4")
         self.assertIsNotNone(rec.xray_installed_at)
+
+    # ---------- 端口审计（新增）----------
+
+    @patch("services.vps_init.test_socks_proxy")
+    @patch("services.vps_init.open_tcp_port_range")
+    @patch("services.vps_init.XrayManager")
+    @patch("services.vps_init.VPSSession")
+    def test_port_audit_clean_vps_full_range_available(
+        self, mock_vps_cls, mock_xray_cls, mock_fw, mock_ext,
+    ):
+        """没有任何已部署 binding 的情况：可用端口数 = 区间长度（10 个）。"""
+        _seed_vps(TEST_IP)
+        vps_ctx = _stub_vps_manager(mock_vps_cls)
+        vps_ctx.get_available_ports.return_value = set(range(18441, 18451))
+        xm = _stub_xray_manager(mock_xray_cls)
+        xm.import_existing_bindings.return_value = []
+        mock_fw.return_value = "firewalld"
+        mock_ext.return_value = {"ok": True, "status_code": 200, "body": "1.2.3.4", "error": None}
+
+        result = init_vps_xray(ip=TEST_IP)
+
+        self.assertEqual(result["status"], "ok")
+        audit = result["port_audit"]
+        self.assertEqual(audit["available_count"], 10)
+        self.assertEqual(audit["available_ports"], list(range(18441, 18451)))
+        self.assertEqual(audit["existing_bindings"], [])
+
+        # 验证编排：审计两步真的调了
+        xm.import_existing_bindings.assert_called_once()
+        vps_ctx.get_available_ports.assert_called_once_with(18441, 18450)
+
+    @patch("services.vps_init.test_socks_proxy")
+    @patch("services.vps_init.open_tcp_port_range")
+    @patch("services.vps_init.XrayManager")
+    @patch("services.vps_init.VPSSession")
+    def test_port_audit_with_existing_bindings_subtracts_them(
+        self, mock_vps_cls, mock_xray_cls, mock_fw, mock_ext,
+    ):
+        """已部署 2 条 binding 占用 18443/18445，可用集合应该排除掉它们。"""
+        _seed_vps(TEST_IP)
+        vps_ctx = _stub_vps_manager(mock_vps_cls)
+        # 假设 ss -tln 已经把 18443/18445 算占了（mock 这种最常见的情况），
+        # vps.get_available_ports 默认已扣 OS 占用，返回不含 18443/18445 的集合
+        vps_ctx.get_available_ports.return_value = (
+            set(range(18441, 18451)) - {18443, 18445}
+        )
+        xm = _stub_xray_manager(mock_xray_cls)
+        xm.import_existing_bindings.return_value = [
+            {"port": 18443, "egress_ip": "1.1.1.1", "egress_country": "JP",
+             "protocol": "socks5", "listen_address": "0.0.0.0",
+             "inbound_user": "u1", "inbound_pwd": "p1", "upstream_host": "a.com"},
+            {"port": 18445, "egress_ip": "2.2.2.2", "egress_country": "DE",
+             "protocol": "http", "listen_address": "0.0.0.0",
+             "inbound_user": "u2", "inbound_pwd": "p2", "upstream_host": "b.com"},
+        ]
+        mock_fw.return_value = "ufw"
+        mock_ext.return_value = {"ok": True, "status_code": 200, "body": "1.2.3.4", "error": None}
+
+        result = init_vps_xray(ip=TEST_IP)
+
+        audit = result["port_audit"]
+        self.assertEqual(audit["available_count"], 8)
+        self.assertNotIn(18443, audit["available_ports"])
+        self.assertNotIn(18445, audit["available_ports"])
+        self.assertEqual(len(audit["existing_bindings"]), 2)
+        # binding 内容透传完整
+        self.assertEqual(audit["existing_bindings"][0]["egress_country"], "JP")
 
     @patch("services.vps_init.XrayManager")
     @patch("services.vps_init.VPSSession")
