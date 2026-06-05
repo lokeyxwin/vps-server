@@ -158,7 +158,9 @@ def register_ip(
             inbound_user, inbound_pwd = generate_random_auth()
 
             # ⑦ 拼上游 outbound + apply
-            outbound_tag = f"proxy-{country_code}-{egress_ip}"
+            # tag 必须跨多次部署唯一，所以加 vps_port 后缀
+            # （即使同一条 egress_ip 重复部署或上次失败留了脏 outbound 也不冲突）
+            outbound_tag = f"proxy-{country_code}-{egress_ip}-{vps_port}"
             proxy_outbound = build_proxy_outbound(
                 host=entry_host, port=entry_port,
                 user=username, pwd=password,

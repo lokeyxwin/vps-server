@@ -305,7 +305,8 @@ class TestDeploymentScenarios(_RegisterIPBase):
         # outbound tag 含 country + egress_ip
         applied_call = xm.apply_proxy_binding.call_args
         proxy_outbound = applied_call.kwargs["proxy_outbound"]
-        self.assertEqual(proxy_outbound["tag"], "proxy-US-9.9.9.9")
+        # tag 含 country + egress + port，跨部署唯一
+        self.assertEqual(proxy_outbound["tag"], "proxy-US-9.9.9.9-18441")
 
     @patch("services.ip_register.open_tcp_port_range")
     @patch("services.ip_register.test_socks_proxy")
