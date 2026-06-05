@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from db import Base, VPSRecord, XrayStatus, get_engine, session_scope
+from db import Base, ProxyRecord, ProxyStatus, VPSRecord, XrayStatus, get_engine, session_scope
 from services.vps_init import init_vps_xray
 from core import (
     AuthFailedError,
@@ -98,10 +98,14 @@ class TestInstallXrayMocked(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.engine = get_engine("sqlite")
-        Base.metadata.create_all(cls.engine, tables=[VPSRecord.__table__])
+        Base.metadata.create_all(
+            cls.engine, tables=[VPSRecord.__table__, ProxyRecord.__table__]
+        )
 
     def setUp(self):
         with session_scope() as s:
+            # ProxyRecord 有 FK 指向 VPSRecord，先删 proxy 再删 vps
+            s.query(ProxyRecord).delete()
             s.query(VPSRecord).filter_by(ip=TEST_IP).delete()
 
     # ---------- 前置短路（DB 视角）----------
@@ -255,6 +259,78 @@ class TestInstallXrayMocked(unittest.TestCase):
 
         # idle_port_count 真落库
         self.assertEqual(_get_vps(TEST_IP).idle_port_count, 8)
+
+        # 两条 binding 应该真落进 proxy_record 表
+        with session_scope() as s:
+            rows = s.query(ProxyRecord).order_by(ProxyRecord.vps_port).all()
+            self.assertEqual(len(rows), 2)
+            # 18443 → JP
+            self.assertEqual(rows[0].vps_port, 18443)
+            self.assertEqual(rows[0].egress_ip, "1.1.1.1")
+            self.assertEqual(rows[0].egress_country, "JP")
+            self.assertEqual(rows[0].protocol, "socks5")
+            self.assertEqual(rows[0].inbound_user, "u1")
+            self.assertEqual(rows[0].get_inbound_pwd(), "p1")  # 解密回明文
+            self.assertEqual(rows[0].status, ProxyStatus.USING)
+            # 18445 → DE
+            self.assertEqual(rows[1].vps_port, 18445)
+            self.assertEqual(rows[1].egress_country, "DE")
+            self.assertEqual(rows[1].protocol, "http")
+
+    @patch("services.vps_init.test_socks_proxy")
+    @patch("services.vps_init.open_tcp_port_range")
+    @patch("services.vps_init.XrayManager")
+    @patch("services.vps_init.VPSSession")
+    def test_proxy_upsert_idempotent_on_reinit(
+        self, mock_vps_cls, mock_xray_cls, mock_fw, mock_ext,
+    ):
+        """重装场景：第一次抄录后再跑一次，应该是 UPDATE 而不是 INSERT 撞唯一键。"""
+        _seed_vps(TEST_IP)
+        vps_ctx = _stub_vps_manager(mock_vps_cls)
+        vps_ctx.get_available_ports.return_value = (
+            set(range(18441, 18451)) - {18443}
+        )
+        xm = _stub_xray_manager(mock_xray_cls)
+        xm.import_existing_bindings.return_value = [
+            {"port": 18443, "egress_ip": "9.9.9.9", "egress_country": "FR",
+             "protocol": "socks5", "listen_address": "0.0.0.0",
+             "inbound_user": "round1_user", "inbound_pwd": "round1_pwd",
+             "upstream_host": "round1.example.com"},
+        ]
+        mock_fw.return_value = "none"
+        mock_ext.return_value = {"ok": True, "status_code": 200, "body": "X", "error": None}
+
+        # 第一次跑：建表里没有
+        init_vps_xray(ip=TEST_IP)
+        with session_scope() as s:
+            self.assertEqual(s.query(ProxyRecord).count(), 1)
+
+        # 把 DB 里的 VPS 改回 NOT_INSTALLED 让流程能再跑（业务有 RUNNING 短路）
+        with session_scope() as s:
+            s.query(VPSRecord).filter_by(ip=TEST_IP).update({
+                VPSRecord.xray_status: XrayStatus.NOT_INSTALLED,
+            })
+
+        # 第二次跑：相同的 (vps_id, vps_port)，应该 UPDATE 而不是抛唯一键冲突
+        # 改一下 binding 内容确认 UPDATE 真生效
+        xm.import_existing_bindings.return_value = [
+            {"port": 18443, "egress_ip": "8.8.8.8", "egress_country": "US",
+             "protocol": "http", "listen_address": "0.0.0.0",
+             "inbound_user": "round2_user", "inbound_pwd": "round2_pwd",
+             "upstream_host": "round2.example.com"},
+        ]
+        init_vps_xray(ip=TEST_IP)
+
+        with session_scope() as s:
+            rows = s.query(ProxyRecord).all()
+            self.assertEqual(len(rows), 1)  # 仍然只有 1 行，没新插
+            rec = rows[0]
+            self.assertEqual(rec.egress_ip, "8.8.8.8")  # 字段被刷新
+            self.assertEqual(rec.egress_country, "US")
+            self.assertEqual(rec.protocol, "http")
+            self.assertEqual(rec.inbound_user, "round2_user")
+            self.assertEqual(rec.get_inbound_pwd(), "round2_pwd")
+            self.assertEqual(rec.upstream_host, "round2.example.com")
 
     @patch("services.vps_init.XrayManager")
     @patch("services.vps_init.VPSSession")

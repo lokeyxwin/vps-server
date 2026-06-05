@@ -6,7 +6,7 @@
 from datetime import datetime
 
 import config
-from db import VPSRecord, XrayStatus, session_scope
+from db import ProxyRecord, VPSRecord, XrayStatus, session_scope
 from log import get_logger
 from core import (
     AuthFailedError,
@@ -114,15 +114,15 @@ def init_vps_xray(ip: str) -> dict:
             _set_idle_port_count(ip, len(available_ports))
             logger.info("可用端口数已写入数据库：%d", len(available_ports))
 
-            # ⑤.4.d proxy 表抄录 stub —— schema 没定，先 log 出来观察形状
-            #   TODO: proxy 表 schema 定型后，把下面 log 改成真 ORM insert
-            for binding in existing_bindings:
+            # ⑤.4.d 把每条已部署的 binding upsert 到 proxy_record
+            #   按 (vps_id, vps_port) 唯一键命中：
+            #     - 已有该行 → 更新字段（重装场景，配置可能改了）
+            #     - 没有 → 新插
+            upserted = _upsert_proxy_bindings(ip, existing_bindings)
+            if upserted:
                 logger.info(
-                    "[proxy 表 stub] 这条已绑定的代理出口会被抄录：vps_ip=%s "
-                    "端口=%d 协议=%s 上游=%s 出口IP=%s 国家=%s 客户端账号=%s",
-                    ip, binding["port"], binding["protocol"],
-                    binding["upstream_host"], binding["egress_ip"],
-                    binding["egress_country"], binding["inbound_user"],
+                    "已抄录 %d 条 xray 端口绑定到 proxy 表：ports=%s",
+                    upserted, sorted(b["port"] for b in existing_bindings),
                 )
 
             # ⑤.5 开服务器本地防火墙 18440-18450（best-effort，失败只警告不阻塞）
@@ -263,6 +263,46 @@ def _save_failure_with_context(ip: str, manager: XrayManager, exc: XrayError) ->
         version=partial_version if partial_version else None,
         installed_at=datetime.now() if partial_installed else None,
     )
+
+
+def _upsert_proxy_bindings(ip: str, bindings: list[dict]) -> int:
+    """把 extract_port_bindings 抠出的 binding 列表 upsert 到 proxy_record。
+
+    匹配键：(vps_id, vps_port)
+    - 已存在该行：更新所有字段（重装场景：配置可能改了，比如换了账密或上游）
+    - 不存在：from_extracted_binding 造新行 add
+
+    返回实际处理的行数（含新插 + 已更新）。
+    """
+    if not bindings:
+        return 0
+
+    from core.security import encrypt_password
+
+    with session_scope() as session:
+        vps_id = session.query(VPSRecord.id).filter_by(ip=ip).scalar()
+        if vps_id is None:
+            # 走到这里说明 VPS 都已经在 DB 里了，理论上不会缺；防御性 0 返回
+            return 0
+
+        for b in bindings:
+            existing = (
+                session.query(ProxyRecord)
+                .filter_by(vps_id=vps_id, vps_port=b["port"])
+                .one_or_none()
+            )
+            if existing is None:
+                session.add(ProxyRecord.from_extracted_binding(vps_id, b))
+            else:
+                # 重装场景：原地刷新字段（密码也重新加密一份）
+                existing.protocol = b.get("protocol", "socks5")
+                existing.inbound_user = b.get("inbound_user", "")
+                existing.inbound_pwd_encrypted = encrypt_password(b.get("inbound_pwd", ""))
+                existing.upstream_host = b.get("upstream_host", "")
+                existing.egress_ip = b.get("egress_ip", "")
+                existing.egress_country = b.get("egress_country", "")
+
+    return len(bindings)
 
 
 def _set_idle_port_count(ip: str, count: int) -> None:
