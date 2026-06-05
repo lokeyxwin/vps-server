@@ -230,6 +230,16 @@ HH:MM:SS [INFO] core.ssh: ...    ← 原子事件（带 [LEVEL] 标记）
 - 标题用 `feat(<scope>):` / `fix:` / `refactor:` / `test:` / `docs:` / `chore:`
 - 摘要列出关键改动点，不堆代码（代码看 diff）
 
+> ⚠️ **严禁 `git add -A` / `git add .` 图省事**
+>
+> 这两个命令会把当前未跟踪的所有文件一锅端进 commit，包括：
+> - 还在调的 main.py / mcp_server.py（按本文件约定它们应当晚于业务最终落地）
+> - 临时调试脚本、本地数据库 dump、.env 误漏
+> - 上一次没跟踪意图的他人改动
+>
+> **必须按文件路径明确 `git add path/to/file ...`**，让每个 commit 的内容跟标题一一对应。
+> 如要一次提多个文件，把路径一个个列出来，**不要用通配**。
+
 ### main.py 和 mcp_server.py
 
 - **main.py**：等所有领域业务做完再统一写路由。每加一个业务**先写业务**，不要为单个业务改 main。
@@ -253,6 +263,7 @@ HH:MM:SS [INFO] core.ssh: ...    ← 原子事件（带 [LEVEL] 标记）
 | `try: ... except Exception: pass` 无注释 | 必须加 `# noqa: BLE001 — <意图说明>` |
 | Mock 测试不验证 DB 状态变化 | 业务的核心副作用就是改 DB，必须验证 |
 | 直接改测试通过断言来"修"挂掉的测试 | 先看为什么挂、是不是代码 bug |
+| `git add -A` / `git add .` 图省事 | 会把未跟踪的所有文件一并提交，污染 commit 范围（详见 Commit 规则） |
 
 ---
 
