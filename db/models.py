@@ -155,6 +155,13 @@ class ProxyRecord(Base):
     # VPS 上对外的端口（业务层约束在 PROXY_PORT_RANGE_START..END）
     vps_port: Mapped[int] = mapped_column(Integer, nullable=False)
 
+    # rgIP 业务新增的 binding 必填；rgvps 端口审计从 xray config 反推的 binding 暂时填 None
+    # （巡检模块未来按 egress_ip 回填）
+    ip_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ip_record.id", ondelete="RESTRICT"),
+        nullable=True, index=True,
+    )
+
     # ---------- 客户端连接侧（VPS_IP:vps_port 用什么协议/账密接入）----------
     # 一般是 'socks5'；将来如果要给客户端用 http 也支持
     protocol: Mapped[str] = mapped_column(String(16), default="socks5", nullable=False)
@@ -204,17 +211,56 @@ class ProxyRecord(Base):
         binding dict 形状参考 extract_port_bindings：必填 port / protocol /
         inbound_user / inbound_pwd / upstream_host；egress_ip / egress_country
         缺失则落空串。密码在这里加密。
+
+        ip_id 留 None：从 xray config 反推的 binding 没法直接对应 ip_record；
+        后续巡检模块会按 egress_ip 字符串回填。
         """
         from core.security import encrypt_password
         return cls(
             vps_id=vps_id,
             vps_port=binding["port"],
+            ip_id=None,
             protocol=binding.get("protocol", "socks5"),
             inbound_user=binding.get("inbound_user", ""),
             inbound_pwd_encrypted=encrypt_password(binding.get("inbound_pwd", "")),
             upstream_host=binding.get("upstream_host", ""),
             egress_ip=binding.get("egress_ip", ""),
             egress_country=binding.get("egress_country", ""),
+        )
+
+    @classmethod
+    def from_new_deployment(
+        cls,
+        *,
+        vps_id: int,
+        vps_port: int,
+        ip_id: int,
+        inbound_user: str,
+        inbound_pwd: str,
+        upstream_host: str,
+        egress_ip: str,
+        egress_country: str = "",
+        protocol: str = "socks5",
+    ) -> "ProxyRecord":
+        """rgIP 业务部署新 binding 时构造 ORM 记录。
+
+        与 from_extracted_binding 的区别：
+        - ip_id 必填（业务持有 IPRecord.id）
+        - 入参显式而非 dict（业务清楚自己手里有啥）
+        - inbound_pwd 在这里加密
+        """
+        from core.security import encrypt_password
+        return cls(
+            vps_id=vps_id,
+            vps_port=vps_port,
+            ip_id=ip_id,
+            protocol=protocol,
+            inbound_user=inbound_user,
+            inbound_pwd_encrypted=encrypt_password(inbound_pwd),
+            upstream_host=upstream_host,
+            egress_ip=egress_ip,
+            egress_country=egress_country,
+            status=ProxyStatus.USING,
         )
 
     def __repr__(self) -> str:

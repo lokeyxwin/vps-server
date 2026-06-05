@@ -20,6 +20,8 @@ from sqlalchemy.exc import IntegrityError
 
 from db import (
     Base,
+    IPProtocol,
+    IPRecord,
     ProxyRecord,
     ProxyStatus,
     VPSRecord,
@@ -31,10 +33,26 @@ from db import (
 def _seed_vps(ip: str = "1.2.3.4") -> int:
     """造一个 VPSRecord 给 proxy.vps_id 当外键，返回 id。
 
-    依赖 setUp 已经把两张表清空，所以这里只管 add。
+    依赖 setUp 已经把三张表清空，所以这里只管 add。
     """
     with session_scope() as s:
         rec = VPSRecord.from_form(ip=ip, username="root", password="pwd", port=22)
+        s.add(rec)
+        s.flush()
+        return rec.id
+
+
+def _seed_ip(egress_ip: str = "8.8.8.8") -> int:
+    """造一条 IPRecord 给 proxy.ip_id 当外键，返回 id。"""
+    with session_scope() as s:
+        rec = IPRecord.from_form(
+            entry_host="proxy.example.com",
+            entry_port=1080,
+            username="up",
+            password="p",
+            protocol=IPProtocol.SOCKS5,
+            egress_ip=egress_ip,
+        )
         s.add(rec)
         s.flush()
         return rec.id
@@ -45,12 +63,19 @@ class TestProxyRecordModel(unittest.TestCase):
     def setUpClass(cls):
         cls.engine = get_engine("sqlite")
         Base.metadata.create_all(
-            cls.engine, tables=[VPSRecord.__table__, ProxyRecord.__table__]
+            cls.engine,
+            tables=[
+                VPSRecord.__table__,
+                IPRecord.__table__,
+                ProxyRecord.__table__,
+            ],
         )
 
     def setUp(self):
+        # 顺序：先删有 FK 的 proxy_record，再删被指向的 ip_record / vps_record
         with session_scope() as s:
             s.query(ProxyRecord).delete()
+            s.query(IPRecord).delete()
             s.query(VPSRecord).delete()
 
     # ---------- 工厂方法 + 加密 ----------
@@ -265,6 +290,70 @@ class TestProxyRecordModel(unittest.TestCase):
         # 但 egress / status 等公开字段应该可见
         self.assertIn("1.1.1.1", r)
         self.assertIn("18443", r)
+
+    # ---------- ip_id FK + from_new_deployment ----------
+
+    def test_from_extracted_binding_leaves_ip_id_none(self):
+        """rgvps 端口审计抠出来的 binding 不知道对应哪条 IP，ip_id 落 None。"""
+        vps_id = _seed_vps()
+        rec = ProxyRecord.from_extracted_binding(
+            vps_id=vps_id,
+            binding={
+                "port": 18443, "protocol": "socks5",
+                "inbound_user": "u", "inbound_pwd": "p",
+                "upstream_host": "x", "egress_ip": "", "egress_country": "",
+            },
+        )
+        self.assertIsNone(rec.ip_id)
+
+    def test_from_new_deployment_sets_ip_id(self):
+        """rgIP 新部署的 binding 必填 ip_id。"""
+        vps_id = _seed_vps()
+        ip_id = _seed_ip("9.9.9.9")
+        rec = ProxyRecord.from_new_deployment(
+            vps_id=vps_id, vps_port=18443, ip_id=ip_id,
+            inbound_user="cu", inbound_pwd="cp",
+            upstream_host="proxy.example.com",
+            egress_ip="9.9.9.9", egress_country="US",
+        )
+        self.assertEqual(rec.ip_id, ip_id)
+        self.assertEqual(rec.vps_id, vps_id)
+        self.assertEqual(rec.vps_port, 18443)
+        self.assertEqual(rec.protocol, "socks5")  # 默认
+        self.assertEqual(rec.status, ProxyStatus.USING)  # 默认
+
+    def test_from_new_deployment_encrypts_inbound_pwd(self):
+        vps_id = _seed_vps()
+        ip_id = _seed_ip("9.9.9.10")
+        plain = "ClientP@ss"
+        rec = ProxyRecord.from_new_deployment(
+            vps_id=vps_id, vps_port=18444, ip_id=ip_id,
+            inbound_user="u", inbound_pwd=plain,
+            upstream_host="x", egress_ip="9.9.9.10",
+        )
+        self.assertIsInstance(rec.inbound_pwd_encrypted, bytes)
+        self.assertNotIn(plain.encode(), rec.inbound_pwd_encrypted)
+        self.assertEqual(rec.get_inbound_pwd(), plain)
+
+    def test_proxy_record_with_ip_id_full_lifecycle(self):
+        """rgIP 部署后的 proxy_record 能正确 JOIN 回 ip_record。"""
+        vps_id = _seed_vps("1.2.3.4")
+        ip_id = _seed_ip("9.9.9.11")
+
+        with session_scope() as s:
+            s.add(ProxyRecord.from_new_deployment(
+                vps_id=vps_id, vps_port=18445, ip_id=ip_id,
+                inbound_user="u", inbound_pwd="p",
+                upstream_host="proxy.example.com",
+                egress_ip="9.9.9.11", egress_country="SG",
+            ))
+
+        with session_scope() as s:
+            rec = s.query(ProxyRecord).filter_by(vps_port=18445).one()
+            self.assertEqual(rec.ip_id, ip_id)
+            # 能反查到 IPRecord
+            ip = s.query(IPRecord).filter_by(id=rec.ip_id).one()
+            self.assertEqual(ip.egress_ip, "9.9.9.11")
 
 
 if __name__ == "__main__":
