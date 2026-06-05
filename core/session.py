@@ -8,6 +8,11 @@ from __future__ import annotations
 
 import paramiko
 
+from core.ports import (
+    compute_available_ports,
+    get_used_ports,
+    is_port_free,
+)
 from core.ssh import (
     connect_server,
     close_server,
@@ -93,6 +98,32 @@ class VPSSession:
     def get_system_info(self) -> dict:
         self._ensure_connected()
         return get_system_info(self._client)
+
+    # -------- 端口探测（包装 core.ports，业务调起来不用再传 client）--------
+
+    def is_port_free(self, port: int) -> bool:
+        """查单个端口在 VPS 上是否空闲。"""
+        self._ensure_connected()
+        return is_port_free(self._client, port)
+
+    def get_used_ports(self, start_port: int, end_port: int) -> set[int]:
+        """查 VPS 上 [start, end] 区间内被占用的 TCP 监听端口。"""
+        self._ensure_connected()
+        return get_used_ports(self._client, start_port, end_port)
+
+    def get_available_ports(
+        self,
+        start_port: int,
+        end_port: int,
+        exclude: set[int] | frozenset[int] | None = None,
+    ) -> set[int]:
+        """一次性算出区间内可用端口集合（已扣掉 OS 占用 + exclude）。
+
+        exclude 不传走 core.ports.COMMON_RESERVED_PORTS（22/443/3306 等）。
+        业务用法：vps.get_available_ports(18441, 18450) 直接拿可用集合。
+        """
+        used = self.get_used_ports(start_port, end_port)
+        return compute_available_ports(used, start_port, end_port, exclude)
 
     def close(self) -> None:
         if self._client is not None:
