@@ -102,7 +102,9 @@ FIREWALL_OPEN_END = 18450
 
 # 返回出口 IP 的探测 URL（用于内部 / 外部 socks5 ping）
 CONNECTIVITY_TEST_URL = "https://api.ipify.org"
-CONNECTIVITY_TEST_TIMEOUT = 8
+# socks5 over 跨境慢链路（如本机→HK/SG VPS→Cloudflare）单 RTT 就要 3-5 秒，
+# 8 秒预算容易卡在握手阶段。20 秒覆盖典型慢链路 + 留点裕量
+CONNECTIVITY_TEST_TIMEOUT = 20
 
 
 # ============================================================
