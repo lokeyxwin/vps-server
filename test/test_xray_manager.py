@@ -26,15 +26,17 @@ class TestEnsureInstalledAndRunning(unittest.TestCase):
     """
 
     def setUp(self):
-        # 把 atom 模块（服务运行时）和 config 模块（配置文件）的函数都 patch 掉
+        # 把 service 模块（运行时操作）和 config 模块（配置文件）的函数都 patch 掉。
+        # atoms 这个变量名保留只是历史称呼——按 CLAUDE.md "原子函数"统称，
+        # 在 manager 视角下，service / config 里的都属于"被薄包装的原子"。
         self.patches = []
         self.atoms = {}
-        # 服务运行时操作：xray.atom
+        # 服务运行时操作：xray.service
         for name in [
             "is_installed", "is_running", "is_enabled",
             "version", "install", "uninstall", "start", "enable",
         ]:
-            p = patch(f"xray.manager.atom.{name}")
+            p = patch(f"xray.manager.service.{name}")
             self.atoms[name] = p.start()
             self.patches.append(p)
         # 配置操作：xray.config（manager 里 import 为 xc）

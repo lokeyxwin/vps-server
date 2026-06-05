@@ -1,13 +1,13 @@
 """xray 领域包。
 
 内部分两层：
-- xray.atom    ← 服务运行时操作（install / start / stop / enable / disable / is_* / version / test_internal_socks）
+- xray.service ← 服务运行时操作（install / start / stop / enable / disable / is_* / version / test_internal_socks）
 - xray.config  ← 配置层（纯函数 build_* + SSH 操作 upload/validate/write_default_config）
 
 外部业务通过 `from xray import ...` 直接拿，不用关心是哪一层。
 """
 
-from xray.atom import (
+from xray.service import (
     # 命令模板
     INSTALL_COMMAND,
     UNINSTALL_COMMAND,

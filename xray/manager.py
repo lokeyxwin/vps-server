@@ -9,9 +9,9 @@ from __future__ import annotations
 import paramiko
 
 from log import get_logger
-from xray import atom
+from xray import service
 from xray import config as xc
-from xray.atom import (
+from xray.service import (
     InstallFailedError,
     UninstallFailedError,
     VerifyFailedError,
@@ -41,36 +41,36 @@ class XrayManager:
     # -------- 查询类（直接代理 atom）--------
 
     def is_installed(self) -> bool:
-        return atom.is_installed(self.client)
+        return service.is_installed(self.client)
 
     def is_running(self) -> bool:
-        return atom.is_running(self.client)
+        return service.is_running(self.client)
 
     def is_enabled(self) -> bool:
-        return atom.is_enabled(self.client)
+        return service.is_enabled(self.client)
 
     def version(self) -> str:
-        return atom.version(self.client)
+        return service.version(self.client)
 
     # -------- 操作类（直接代理 atom，错误向上抛）--------
 
     def install(self) -> None:
-        atom.install(self.client)
+        service.install(self.client)
 
     def uninstall(self) -> None:
-        atom.uninstall(self.client)
+        service.uninstall(self.client)
 
     def start(self) -> None:
-        atom.start(self.client)
+        service.start(self.client)
 
     def stop(self) -> None:
-        atom.stop(self.client)
+        service.stop(self.client)
 
     def enable(self) -> None:
-        atom.enable(self.client)
+        service.enable(self.client)
 
     def disable(self) -> None:
-        atom.disable(self.client)
+        service.disable(self.client)
 
     # -------- 配置层（代理到 xray.config）--------
 
@@ -88,7 +88,7 @@ class XrayManager:
 
     def test_internal_socks(self, port: int = xc.DEFAULT_PORT) -> dict:
         """在服务器内部测试 socks5 代理（默认 18440）。返回结果字典。"""
-        return atom.test_internal_socks(self.client, port=port)
+        return service.test_internal_socks(self.client, port=port)
 
     # -------- 高层动作：业务调这一个就够 --------
 
