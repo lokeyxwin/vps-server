@@ -1,122 +1,309 @@
-# 代办：IP 业务
+# TODO：IP 业务
 
-> 此文件暂存 IP 业务的设计意图、流程、待加工具。
-> Proxy 作为独立业务流已**取消**——端口绑定（原 deploy_proxy 的事）合并到 rgIP 流程里。
-> 业务全跑通后，回头敲定数据表，再删除本文件。
-
----
-
-## 当前对齐快照（2026-06-05）
-
-**业务流只剩两条**：`rgvps`（已闭环）+ `rgip`（在做）。
-
-### rgIP 业务流程（最终版）
-
-入参字段：`provider_domain / entry_host / entry_port / username / password / protocol / egress_ip / region / expire_date`
-
-```
-① 查重：egress_ip 已存在？
-   - 未过期 → return duplicate
-   - 已过期 + --renew → 更新 expire_date 后返回 ok
-   - 已过期 + 无 --renew → return expired_exists
-   - 不存在 → 继续
-
-② 挑 VPS：未过期 + 还有闲置端口（18441-18450）的一台
-   - 没有 → return no_available_vps
-
-③ 在该 VPS 上找一个空闲端口
-
-④ SSH 连进 VPS（VPSSession，复用 core）
-
-⑤ 改 xray config：加 inbound(vps_port) + outbound(走这条代理) + routing
-   - 写入 /usr/local/etc/xray/config.json
-   - reload xray
-
-⑥ 内 ping：VPS 内 curl --socks5 localhost:vps_port
-   - 不通 → 回滚 xray 配置，return failed（账密/入口可能错）
-
-⑦ 校验 egress_ip：内 ping 返回 body 是不是用户填的 egress_ip
-   - 不匹配 → 回滚 xray 配置，return egress_mismatch
-
-⑧ 入事实表（端口绑定记录，详见下文数据结构方向）
-
-⑨ 外 ping：本机用 requests 走 vps_ip:vps_port
-   - 通 → 标记可达 + return ok
-   - 不通 → 尝试 core.firewall.open_tcp_port_range 开 VPS 本地防火墙 → 重测
-     - 通 → ok
-     - 还不通 → 标记不可达 + return ok_security_group_blocked
-       （提示用户去云控制台开端口；提醒里的端口跟着 config.py 的范围走）
-```
-
-### 关键设计原则
-
-- **业务函数走函数链路，不抽 Manager**（YAGNI；只有 rgIP 一个业务，没必要抽类）
-- **业务跑通了再敲表**（不凭空设计字段）
-- **唯一存在的对象是 VPSSession**（来自 core，复用 VPS 阶段成果）
-- **客户端连我们部署的代理需要 auth**（业务层生成账密，纯工具只做拼装）
-
-### 部署成功后要返回的信息（提前记录，落库时用）
-
-- 连接协议（默认 socks5）
-- VPS IP / 部署端口
-- 客户端 auth 账号 / 密码
-- vmess / vless 订阅链接（如未来扩展）
-
-### 数据结构方向（**先不动**，业务跑通再回来敲）
-
-```
-VPS 表：增加端口计数字段（闲置数 / 过期数）
-        - 可用总数固定 10（端口范围 18441-18450），不存
-        - rgIP 写事实表后反向 -1 更新闲置数
-
-IP 表：只放 IP 凭据
-        (provider_domain / entry_host / entry_port / username /
-         password_encrypted / protocol / egress_ip / region / expire_date)
-
-事实表（端口绑定记录）：
-  字段：vps_id / vps_port / inbound_protocol / inbound_user / inbound_pwd_encrypted /
-        ip_id / status('using' / 'expired') / 创建时间
-  约束：UNIQUE(vps_id, vps_port) + UNIQUE(ip_id)（1:1）
-  规模：每台 VPS 最多 10 条，固定（即使端口用满 / 过期，也不新增行；
-        过期就改 status='expired'，等下一条 IP 顶上时复用该 vps_port 的行）
-```
-
-### 巡检模块（**留待下一轮**）
-
-- 定时扫 VPS / IP 的 expire_date → 更新各表 is_expired 标记
-- 触发续费提醒（按 provider_domain 分组）
-- 同步事实表 status：IP 到期 → status='expired' → VPS 表过期端口数 +1
-- 这一轮不做
-
-### CLI 命名（保留）
-
-| CLI 子命令 | 业务函数 | 状态 |
-|-----------|---------|------|
-| `rgvps` | `register_vps` | ✅ 已实现 |
-| `rgip` | `register_ip` | ⬜ 在做 |
-| `rgip --renew` | 同上的续费分支 | ⬜ 在做 |
+> 通用工程规则全在 [CLAUDE.md](CLAUDE.md)。本文件**只讲 IP 业务自己的事**：
+> - 业务流程拆解
+> - DB 字段设计
+> - 实现步骤清单
+> - 待你拍板的决策点
+>
+> 业务全跑通后删除本文件。
 
 ---
 
-## 工具清单（造工具 → 写业务 → 入库 的顺序）
+## 1. 业务身份
 
-| # | 工具 | 位置 | 类型 | 状态 |
-|---|------|------|------|------|
-| 1 | `build_proxy_outbound(host, port, user, pwd, protocol)` | `ip/atom.py` | 纯函数 | ✅ 已做（commit `4fa50ce`） |
-| 2 | `build_deploy_config(vps_port, proxy_outbound, inbound_user, inbound_pwd)` | `ip/atom.py` | 纯函数 | ⬜ 下一个 |
-| 3 | `reload(client)` | `xray/atom.py` | SSH 操作 | ⬜ 待做 |
-| 4 | `get_used_ports(client, start, end)` | `core/ports.py`（新建） | SSH 操作 | ⬜ 待做 |
+**rgIP**：把一条上游代理（云服务商买的）登记进系统，**同时部署到一台 VPS 的某个端口**作为对外出口。
+登记 = 部署 = 写两张表（IP 表 + proxy 表）。**不再有独立的 deploy_proxy 业务**——端口绑定已经合并进 rgIP。
+
+最终用户感知：客户端连 `VPS_IP:vps_port` (账密 socks5) → 流量通过上游代理出去 → 外网看到的是上游代理的 egress_ip。
 
 ---
 
-## 已废弃的旧业务全景（仅留作历史参考）
+## 2. rgIP 业务流程（最终版）
+
+### 入参
+
+```python
+register_ip(
+    entry_host,        # 上游代理入口（域名或 IP）
+    entry_port,        # 上游代理入口端口
+    username,          # 上游代理账号
+    password,          # 上游代理密码
+    protocol,          # 'socks5' / 'http'
+    egress_ip,         # 用户在云服务商控制台看到的出口 IP（业务身份键）
+    region,            # 地区（用户填）
+    provider_domain,   # 服务商控制台域名（如 brightdata.com）
+    expire_date,       # 到期日期
+    renew=False,       # --renew 续费分支
+) -> dict
+```
+
+### 主流程
 
 ```
-旧设计（已废）                  当前设计
-─────────────                  ─────────
-VPS 业务 ✅                     VPS 业务 ✅
-IP 业务（仅入库 IP）            IP 业务（入库 IP + 直接部署到 VPS 端口）
-Proxy 业务（再部署端口）        ✗ 取消，合并进 IP 业务
+① 查重（按 egress_ip）
+    - 不存在 → 继续
+    - 存在 + 未过期 → return duplicate（提示已登记 + 到期时间）
+    - 存在 + 已过期 + --renew → 只 UPDATE expire_date，return ok_renewed
+    - 存在 + 已过期 + 无 --renew → return expired_exists（提示加 --renew）
+
+② 挑 VPS：未过期 + idle_port_count > 0
+    SELECT FROM vps_record
+    WHERE (expire_date IS NULL OR expire_date >= today)
+      AND idle_port_count > 0
+      AND xray_status = 'running'
+    ORDER BY idle_port_count DESC, id ASC  # 闲端口最多的优先，相同则先注册的优先
+    LIMIT 1
+    - 没有合适 VPS → return no_available_vps
+
+③ SSH 连进这台 VPS
+
+④ 工具编排层算空闲端口集合
+    available = vps.get_available_ports(PROXY_PORT_RANGE_START, END)
+    # 已扣 OS 占用 + COMMON_RESERVED
+    # 再扣已有 proxy_record 行（防御性，理论上应一致）
+    available -= 已被该 VPS 的 proxy_record 行占用的端口
+    - available 为空（罕见竞态）→ return no_available_port
+
+⑤ 挑端口
+    vps_port = min(available)  # 取最小，行为可预测
+
+⑥ 生成客户端 inbound 账密
+    inbound_user, inbound_pwd = xray.config.generate_random_auth()
+
+⑦ 拼 outbound + 完整 config
+    proxy_outbound = xray.config.build_proxy_outbound(
+        host=entry_host, port=entry_port, user=username, pwd=password,
+        protocol=protocol, tag=f"proxy-out-{vps_port}",
+    )
+    proxy_outbound["_meta"] = {  # 业务约定字段，extract_port_bindings 读这个
+        "egress_ip": egress_ip,
+        "egress_country": region,
+    }
+
+    # 关键：要保留 VPS 上已有的其他客户端 inbound（其他 IP 业务部署的），
+    # 不能直接 build_proxy_relay_config 覆盖单条
+    current_config = xray.config.read_config(vps.client) or build_vps_direct_config()
+    # 把新的 inbound + outbound 加到 current_config 的 inbounds[] / outbounds[]
+    # 再加 routing 规则
+    # —— 这一步可能需要新工具 xray.config.add_proxy_binding(current_config, ...)
+
+⑧ 上传 + 校验 + reload
+    xray.config.upload_config(vps.client, new_config)
+    xray.config.validate_config(vps.client)  # xray test -confdir
+    xray.service.reload(vps.client)
+
+⑨ 内 ping（验证配置生效 + 出口 IP 匹配）
+    result = xray.service.test_internal_socks(vps.client, port=vps_port)
+    # 不通 → 回滚 xray config，return failed（账密/入口可能错）
+    # 通 → 校验 result["body"] == egress_ip
+    #     不匹配 → 回滚 xray config，return egress_mismatch
+    #     匹配 → 入库 ProxyRecord（status=USING）+ IPRecord，进入外 ping
+
+⑩ 外 ping（从本机走 vps_ip:vps_port 测试）
+    result = core.test_socks_proxy(vps_ip, vps_port, user=inbound_user, pwd=inbound_pwd)
+    # 通 → status=ok，更新 VPS 表 idle_port_count -= 1
+    # 不通 → 尝试 core.firewall.open_tcp_port_range(client, vps_port, vps_port)
+    #        重测外 ping
+    #        - 通 → ok
+    #        - 还不通 → 安全组没开 → status=ok_security_group_blocked
+    #          提示用户去 666clouds 控制台开 vps_port 入方向
+
+⑪ 返回 dict 含完整节点信息（最终给用户看的）
+    {
+        "status": "ok" / "ok_security_group_blocked" / ...,
+        "node": {
+            "protocol": "socks5",
+            "host": vps_ip,
+            "port": vps_port,
+            "username": inbound_user,
+            "password": inbound_pwd,
+            # 可选：subscription_link 等 vmess/vless 链接（暂不做）
+        },
+        "binding": {
+            "vps_id": ..., "ip_id": ..., "proxy_id": ...,
+        },
+        "ping": {"internal": ..., "external": ...},
+    }
 ```
+
+### 业务级状态枚举（rgIP 自己的）
+
+| status | 含义 | 入库吗 |
+|--------|------|------|
+| `ok` | 内通 + 外通 + egress 匹配 | IP 表 + proxy 表 |
+| `ok_security_group_blocked` | 内通 + 外不通（自动开 VPS 防火墙后仍不通） | 同上，提示用户开安全组 |
+| `ok_renewed` | --renew 命中过期记录，只刷 expire_date | 只 UPDATE IP 表 |
+| `duplicate` | egress_ip 已存在且未过期 | 不入库 |
+| `expired_exists` | egress_ip 已存在但过期，没传 --renew | 不入库 |
+| `no_available_vps` | 没有"未过期 + 有闲端口"的 VPS | 不入库 |
+| `no_available_port` | 罕见竞态：选的 VPS 端口被刚抢走 | 不入库 |
+| `egress_mismatch` | 内 ping 通但实测出口 IP 跟用户填的不一样 | 不入库 + 回滚 xray |
+| `failed` | 内 ping 不通（账密/入口可能错） | 不入库 + 回滚 xray |
+| 4 种连接错 | auth_failed/timeout/refused/failed | 同 rgvps |
 
 ---
+
+## 3. DB 设计
+
+### 新增 `IPRecord`（ip_record 表）
+
+```python
+class IPProtocol:
+    SOCKS5 = "socks5"
+    HTTP = "http"
+
+class IPRecord(Base):
+    __tablename__ = "ip_record"
+
+    id: int PK
+    provider_domain: str(255) default=""     # 服务商域名（续费提醒分组用）
+
+    # 上游入口
+    entry_host: str(255) NOT NULL            # 域名或 IP
+    entry_port: int NOT NULL
+    username: str(128) NOT NULL              # 明文，跟 VPSRecord.username 一致
+    password_encrypted: bytes NOT NULL       # 密文
+    protocol: str(16) NOT NULL               # IPProtocol 常量约束
+
+    # 出口（业务身份）
+    egress_ip: str(64) UNIQUE INDEX NOT NULL # 唯一键
+    region: str(64) default=""
+
+    # 生命周期
+    expire_date: date NULL
+    is_expired: int default=0                # 0/1，巡检维护（暂不实现巡检）
+
+    created_at / updated_at
+```
+
+工厂方法：`IPRecord.from_form(...)` 同 VPSRecord 风格，加密在内。
+辅助方法：`get_password()` 解密。
+
+### `ProxyRecord` 已建好
+
+字段见 db/models.py（ProxyRecord 类）。**rgIP 业务在这张表加一行**（不是用 from_extracted_binding，因为这次是新部署不是从 xray 抠出来——可能要加新工厂方法 `from_new_deployment(vps_id, vps_port, ip_id, ...)`，或者直接构造）。
+
+⚠️ **当前 ProxyRecord 没有 ip_id FK 字段**（denormalized 设计避免依赖 IP 表）。**写 rgIP 时要决定**：
+- 选项 A：保持 denormalized，proxy_record 通过 egress_ip 反查 IPRecord
+- 选项 B：给 proxy_record 加 `ip_id` 字段，FK 到 ip_record
+- 我（Claude）倾向 **B**——proxy 表本质是"IP 部署到 VPS 端口的关系表"，有 ip_id 后续 JOIN 查节点信息会方便。
+
+### `VPSRecord.idle_port_count` 维护
+
+- rgvps 端口审计阶段写入（已有）
+- rgIP 成功部署一条 → -1
+- 未来 IP 过期巡检识别到 → +1（先不做）
+
+---
+
+## 4. 工具清单（rgIP 需要的）
+
+### 已有可直接复用
+
+| 工具 | 位置 |
+|------|------|
+| `VPSSession.from_record` / `.get_available_ports` / `.is_port_free` | core |
+| `core.test_socks_proxy(vps_ip, vps_port, user, pwd)` | core（**确认是否支持 user/pwd 入参**，可能要补） |
+| `core.firewall.open_tcp_port_range` | core |
+| `xray.config.build_proxy_outbound` | xray.config |
+| `xray.config.generate_random_auth` | xray.config |
+| `xray.config.read_config` / `upload_config` / `validate_config` | xray.config |
+| `xray.service.reload` | xray.service |
+| `xray.service.test_internal_socks` | xray.service |
+| `XrayManager.import_existing_bindings` | xray.manager |
+
+### 要新造
+
+| 工具 | 位置 | 干啥 |
+|------|------|------|
+| `xray.config.add_proxy_binding(current, vps_port, proxy_outbound, in_user, in_pwd)` | xray.config | 纯函数：往现有 config dict 里追加一组「客户端 inbound + 上游 outbound + routing 规则」，不破坏原有配置 |
+| `xray.config.remove_proxy_binding(current, vps_port)` | xray.config | 纯函数：回滚用，删掉指定 vps_port 对应的 inbound/outbound/routing 三件套 |
+| `IPRecord.from_form(...)` | db.models | 工厂方法（密码加密） |
+| `services/ip_register.py::register_ip(...)` | services | 业务函数 |
+| 可能：`test_socks_proxy` 支持 user/pwd 入参 | core.proxy_check | 业务部署的 inbound 是有账密的，外 ping 时要带 |
+
+---
+
+## 5. 实现顺序
+
+按 CLAUDE.md "原子 → Manager → 业务" 走：
+
+| Step | 内容 |
+|------|------|
+| 1 | DB: `IPRecord` + `IPProtocol` + 工厂方法 + ORM 测试 |
+| 2 | DB: 如选 B 方案，`ProxyRecord` 加 `ip_id` FK |
+| 3 | atom: `xray.config.add_proxy_binding` + `remove_proxy_binding` 纯函数 + 测试 |
+| 4 | atom: `core.proxy_check.test_socks_proxy` 加 `user/pwd` 参数（如果还没） + 测试 |
+| 5 | Manager: 如需要加 `XrayManager.apply_proxy_binding(vps_port, ...)` 复合方法（看业务编排里有没有重复逻辑值得抽） |
+| 6 | 业务: `services/ip_register.py::register_ip` + 业务测试（全 status 路径 mock 覆盖） |
+| 7 | 真服务器跑：用真代理（你提供）+ 你那台 666clouds VPS 验证 rgIP 全链路 |
+| 8 | 巡检模块：暂不做 |
+
+---
+
+## 6. 待你拍板的决策点
+
+### Q1：ProxyRecord 加 ip_id FK 还是保持 denormalized？
+
+| 选项 | 优点 | 缺点 |
+|------|------|------|
+| A: 保持 denormalized | proxy_record 独立，不依赖 IP 表 | 查节点完整信息要 JOIN egress_ip（字符串匹配） |
+| B: 加 ip_id FK（推荐） | JOIN 方便，关系清晰 | proxy_record schema 要改（drop + recreate） |
+
+### Q2：续费分支 CLI 怎么写？
+
+- 选项 A：`rgip --renew`（一个子命令两种行为）
+- 选项 B：独立子命令 `renewip`
+
+### Q3：rgIP 业务级 status 枚举叫啥？
+
+参考上面的 9 种 status，认了就这么定。
+
+### Q4：客户端 inbound 协议是否硬编码 socks5？
+
+之前对齐过：**部署的对外协议固定 socks5**（手机/电脑都能用）。
+如果未来要支持 http/vmess，再扩展。**当前业务函数入参不暴露这个**。
+
+### Q5：上游代理"出口国家"字段从哪里取？
+
+之前说："IP 业务那边等下回去加，取备注里的字符串"——意思是用户登记 IP 时直接传 `region` 参数，业务直接落库。读出来时 `extract_port_bindings` 走 `_meta["egress_country"]` 已经定好。✅ 不需要再问。
+
+### Q6：rgIP 失败时是否回滚 xray 配置？
+
+- 内 ping 不通 → 是的，回滚（用 `remove_proxy_binding` + upload + reload）
+- egress 不匹配 → 同上
+- 外 ping 不通（安全组）→ **不回滚**（配置正确，只是云端没开端口）
+- 这个流程我已经写进上面流程图里，确认即可
+
+---
+
+## 7. 跑业务前的环境检查
+
+- VPS 表里要有**至少 1 台 xray_status='running' 且 idle_port_count > 0**的 VPS
+- 当前你已经有 `203.0.113.10`（idle_port_count=10）✅
+- 准备一条真实上游代理凭据（任何 socks5/http 都行）
+- 跑命令大致是：
+
+```bash
+uv run python main.py rgip \
+  --entry-host proxy.example.com \
+  --entry-port 1080 \
+  --user xxx \
+  --pwd 'yyy' \
+  --protocol socks5 \
+  --egress 1.2.3.4 \
+  --region US \
+  --provider brightdata.com \
+  --ed 2027-01-01
+```
+
+main.py 也要等业务写完再加 rgip 子命令。
+
+---
+
+## 8. 历史决策档案（仅供查阅）
+
+- proxy 业务已合并进 rgIP，不再独立 ❌
+- ip 包目录已删（无 ip-specific atom，所有"代理凭据→config"翻译都属于 xray.config 领域）✅
+- 工具清单：rgIP 自己需要的工具大部分已造好，rgvps 阶段已经把基建打牢 ✅
