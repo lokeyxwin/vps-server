@@ -38,7 +38,11 @@ ENCRYPTION_KEY = os.environ.get("ENCRYPTION_KEY", "")
 DB_TYPE = os.environ.get("DB_TYPE", "sqlite")
 
 # SQLite 配置（开发/测试）
-SQLITE_PATH = PROJECT_ROOT / "db" / "vps_server.db"
+# 测试隔离：跑测试时 conftest.py 或测试 entry 设置 VPS_SERVER_TESTING=1，
+# 切到独立的测试 DB（vps_server_test.db），不污染 dev 数据
+_TESTING = os.environ.get("VPS_SERVER_TESTING", "").lower() in {"1", "true", "yes"}
+_DB_FILENAME = "vps_server_test.db" if _TESTING else "vps_server.db"
+SQLITE_PATH = PROJECT_ROOT / "db" / _DB_FILENAME
 SQLITE_URL = f"sqlite:///{SQLITE_PATH}"
 
 # MySQL 配置（生产）—— 通过环境变量注入凭证，避免硬编码
@@ -70,6 +74,11 @@ SSH_DEFAULT_PORT = 22
 # execute_command 失败时退避重试。3 次尝试，间隔 0.25 / 1 / 2 秒。
 SSH_EXECUTE_RETRY_ATTEMPTS = 3
 SSH_EXECUTE_RETRY_BACKOFF = (0.25, 1.0, 2.0)
+
+# connect_server 同款：老服务器对频繁建连也会拒。3 次尝试，间隔 2 / 5 秒（比 channel
+# 间隔大，因为这是 TCP/SSH 握手层；服务器端 fail2ban 一般 sleep 几秒就放过）
+SSH_CONNECT_RETRY_ATTEMPTS = 3
+SSH_CONNECT_RETRY_BACKOFF = (2.0, 5.0)
 
 
 # ============================================================
