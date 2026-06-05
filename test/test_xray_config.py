@@ -175,7 +175,7 @@ class TestValidateConfig(unittest.TestCase):
         mock_exec.return_value = {"stdout": "", "stderr": "", "exit_code": 0}
         validate_config(MagicMock())
         args, _ = mock_exec.call_args
-        self.assertIn("xray test", args[1])
+        self.assertIn("xray run -test", args[1])
         self.assertIn("-confdir", args[1])
 
 
