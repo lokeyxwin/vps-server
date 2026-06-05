@@ -31,6 +31,7 @@ from core.firewall import (
     FIREWALL_OPEN_FAILED_MESSAGE,
 )
 from core.proxy_check import test_socks_proxy, EXTERNAL_UNREACHABLE_MESSAGE
+from core.ports import get_used_ports, PortProbeError, PORT_PROBE_FAILED_MESSAGE
 
 
 __all__ = [
@@ -57,4 +58,7 @@ __all__ = [
     "FIREWALL_OPEN_FAILED_MESSAGE",
     "test_socks_proxy",
     "EXTERNAL_UNREACHABLE_MESSAGE",
+    "get_used_ports",
+    "PortProbeError",
+    "PORT_PROBE_FAILED_MESSAGE",
 ]
