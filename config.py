@@ -98,3 +98,14 @@ FIREWALL_OPEN_END = 18450
 # 返回出口 IP 的探测 URL（用于内部 / 外部 socks5 ping）
 CONNECTIVITY_TEST_URL = "https://api.ipify.org"
 CONNECTIVITY_TEST_TIMEOUT = 8
+
+
+# ============================================================
+# GeoIP（IP 归属地查询）
+# ============================================================
+
+# ipinfo.io 免费 50k 次/月（注册 token 后），无 token 也能查但限额很小
+# rgIP 业务在登记 IP 时调一次，用于把权威国家/城市信息写入 ip_record
+IPINFO_API_URL = "https://ipinfo.io/{ip}"
+IPINFO_TOKEN = os.environ.get("IPINFO_TOKEN", "")
+IPINFO_TIMEOUT = 8
