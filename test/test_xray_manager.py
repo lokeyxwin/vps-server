@@ -26,15 +26,20 @@ class TestEnsureInstalledAndRunning(unittest.TestCase):
     """
 
     def setUp(self):
-        # 把 atom 模块的所有函数 patch 掉
+        # 把 atom 模块（服务运行时）和 config 模块（配置文件）的函数都 patch 掉
         self.patches = []
         self.atoms = {}
+        # 服务运行时操作：xray.atom
         for name in [
             "is_installed", "is_running", "is_enabled",
             "version", "install", "uninstall", "start", "enable",
-            "is_config_blank", "write_default_config",
         ]:
             p = patch(f"xray.manager.atom.{name}")
+            self.atoms[name] = p.start()
+            self.patches.append(p)
+        # 配置操作：xray.config（manager 里 import 为 xc）
+        for name in ["is_config_blank", "write_default_config"]:
+            p = patch(f"xray.manager.xc.{name}")
             self.atoms[name] = p.start()
             self.patches.append(p)
         # 默认全 happy path

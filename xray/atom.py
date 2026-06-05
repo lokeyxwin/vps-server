@@ -26,36 +26,8 @@ UNINSTALL_COMMAND = (
 INSTALL_TIMEOUT = config.XRAY_INSTALL_TIMEOUT
 
 
-# ============================================================
-# 默认 config（VPS 自身代理端口 + freedom 直出）
-# ============================================================
-#
-# 端口分配约定：
-#   18440           ← xray 默认核心配置端口（VPS 自身的 socks 直出，配置于 config.XRAY_DEFAULT_PORT）
-#   18441-18450     ← Proxy 业务部署的代理出口（每个 VPS 最多 10 个）
-#
-# 为啥要写默认 config：
-#   xray-install 装完后 config.json 可能是空的（x-ui 面板类场景下需要后续 panel 添加节点）。
-#   没 config 就 `systemctl start xray` 立刻退出 code=23（systemd 不会重启）。
-#   写一个最小可用 config 让服务能正常 active，业务后续往里加 inbounds 即可。
-#
-DEFAULT_CONFIG_PATH = "/usr/local/etc/xray/config.json"
-DEFAULT_PORT = config.XRAY_DEFAULT_PORT
-DEFAULT_CONFIG_JSON = f'''{{
-  "log": {{"loglevel": "warning"}},
-  "inbounds": [
-    {{
-      "tag": "default-direct",
-      "port": {DEFAULT_PORT},
-      "listen": "0.0.0.0",
-      "protocol": "socks",
-      "settings": {{"auth": "noauth", "udp": true}}
-    }}
-  ],
-  "outbounds": [
-    {{"protocol": "freedom", "tag": "direct"}}
-  ]
-}}'''
+# 默认 config 相关常量 + 构造 / 上传 / 校验函数已搬到 xray/config.py。
+# 这里只保留与服务运行时（install / start / stop / 自检）相关的内容。
 
 
 # ============================================================
@@ -241,29 +213,13 @@ def disable(client: paramiko.SSHClient) -> None:
 
 
 # ============================================================
-# 配置文件操作（用于"config 空 → 写默认让服务能跑"场景）
+# 服务自检：在 VPS 内部 curl 走 xray socks 测试
+# （留在 service 层而不是 config 层：测试的是「运行时服务」而非「配置文件」）
 # ============================================================
-
-def get_config_size(client: paramiko.SSHClient) -> int:
-    """获取 config.json 文件大小（字节）。不存在或读取失败返回 0。"""
-    result = execute_command(
-        client,
-        f"stat -c %s {DEFAULT_CONFIG_PATH} 2>/dev/null || echo 0",
-    )
-    try:
-        return int(result["stdout"].strip())
-    except (ValueError, KeyError):
-        return 0
-
-
-def is_config_blank(client: paramiko.SSHClient) -> bool:
-    """检查 config.json 是否空（缺失或 0 字节）。"""
-    return get_config_size(client) == 0
-
 
 def test_internal_socks(
     client: paramiko.SSHClient,
-    port: int = DEFAULT_PORT,
+    port: int = config.XRAY_DEFAULT_PORT,
     test_url: str = config.CONNECTIVITY_TEST_URL,
     timeout: int = config.CONNECTIVITY_TEST_TIMEOUT,
 ) -> dict:
@@ -307,24 +263,3 @@ def test_internal_socks(
         "body": body,
         "error": None if ok else f"http_code={http_code} body={body!r}",
     }
-
-
-def write_default_config(client: paramiko.SSHClient) -> None:
-    """写入最小可用默认 config：监听 18440 socks，freedom 直出。
-
-    仅应在 config 空/缺失时调用，**不要覆盖用户已有内容**。
-    业务场景：装了 xray 但 config.json 是空的（如 x-ui 类面板未添加节点），
-    服务起不来。写默认 config 后能让服务正常 active，业务后续往里加节点。
-    """
-    # 用 heredoc 避免 JSON 里的 " 被 shell 解析
-    cmd = (
-        f"cat > {DEFAULT_CONFIG_PATH} << 'XRAY_DEFAULT_CONFIG_EOF'\n"
-        f"{DEFAULT_CONFIG_JSON}\n"
-        f"XRAY_DEFAULT_CONFIG_EOF"
-    )
-    result = execute_command(client, cmd)
-    if result["exit_code"] != 0:
-        raise InstallFailedError(
-            f"写入默认 xray config 失败: exit={result['exit_code']} "
-            f"stderr={result['stderr'][:200]}"
-        )

@@ -10,6 +10,7 @@ import paramiko
 
 from log import get_logger
 from xray import atom
+from xray import config as xc
 from xray.atom import (
     InstallFailedError,
     UninstallFailedError,
@@ -71,13 +72,21 @@ class XrayManager:
     def disable(self) -> None:
         atom.disable(self.client)
 
+    # -------- 配置层（代理到 xray.config）--------
+
     def is_config_blank(self) -> bool:
-        return atom.is_config_blank(self.client)
+        return xc.is_config_blank(self.client)
 
     def write_default_config(self) -> None:
-        atom.write_default_config(self.client)
+        xc.write_default_config(self.client)
 
-    def test_internal_socks(self, port: int = atom.DEFAULT_PORT) -> dict:
+    def upload_config(self, config_dict: dict) -> None:
+        xc.upload_config(self.client, config_dict)
+
+    def validate_config(self) -> None:
+        xc.validate_config(self.client)
+
+    def test_internal_socks(self, port: int = xc.DEFAULT_PORT) -> dict:
         """在服务器内部测试 socks5 代理（默认 18440）。返回结果字典。"""
         return atom.test_internal_socks(self.client, port=port)
 
