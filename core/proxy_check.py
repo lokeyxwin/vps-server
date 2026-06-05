@@ -31,18 +31,25 @@ def test_socks_proxy(
     proxy_port: int,
     test_url: str = DEFAULT_TEST_URL,
     timeout: int = DEFAULT_TIMEOUT,
+    user: str = "",
+    pwd: str = "",
 ) -> dict:
     """从本机通过 socks5 代理发请求，验证代理是否可用。
 
+    user/pwd 同时为空 = 免认证代理（rgvps 阶段测 18440 直出）
+    user/pwd 至少一个非空 = 账密代理（rgIP 部署后测 18441+ 的客户端 inbound）
+
     返回 {"ok": bool, "status_code": int|None, "body": str, "error": str|None}
     """
+    auth = f"{user}:{pwd}@" if (user or pwd) else ""
     proxies = {
-        "http": f"socks5h://{proxy_ip}:{proxy_port}",
-        "https": f"socks5h://{proxy_ip}:{proxy_port}",
+        "http": f"socks5h://{auth}{proxy_ip}:{proxy_port}",
+        "https": f"socks5h://{auth}{proxy_ip}:{proxy_port}",
     }
+    # 日志不打 pwd，只标 with_auth 状态
     logger.info(
-        "test_socks_proxy: target=%s:%s url=%s → testing...",
-        proxy_ip, proxy_port, test_url,
+        "test_socks_proxy: target=%s:%s url=%s with_auth=%s → testing...",
+        proxy_ip, proxy_port, test_url, bool(user or pwd),
     )
     try:
         r = requests.get(test_url, proxies=proxies, timeout=timeout)

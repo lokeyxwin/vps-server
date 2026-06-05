@@ -61,6 +61,49 @@ class TestSocksProxyCheck(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("ConnectionError", result["error"])
 
+    @patch("core.proxy_check.requests.get")
+    def test_no_auth_uses_plain_scheme(self, mock_get):
+        """user/pwd 都空 → URL 不带账密前缀（rgvps 阶段测 18440）。"""
+        mock_resp = MagicMock(); mock_resp.status_code = 200; mock_resp.text = "1.1.1.1"
+        mock_get.return_value = mock_resp
+
+        test_socks_proxy("vps.example.com", 18440)
+
+        args, kwargs = mock_get.call_args
+        self.assertEqual(
+            kwargs["proxies"]["http"],
+            "socks5h://vps.example.com:18440",
+        )
+
+    @patch("core.proxy_check.requests.get")
+    def test_with_auth_includes_credentials_in_url(self, mock_get):
+        """user/pwd 非空 → URL 含 user:pwd@host:port（rgIP 阶段测客户端 inbound）。"""
+        mock_resp = MagicMock(); mock_resp.status_code = 200; mock_resp.text = "1.1.1.1"
+        mock_get.return_value = mock_resp
+
+        test_socks_proxy("vps.example.com", 18443, user="cu", pwd="cp")
+
+        args, kwargs = mock_get.call_args
+        self.assertEqual(
+            kwargs["proxies"]["http"],
+            "socks5h://cu:cp@vps.example.com:18443",
+        )
+        self.assertEqual(
+            kwargs["proxies"]["https"],
+            "socks5h://cu:cp@vps.example.com:18443",
+        )
+
+    @patch("core.proxy_check.requests.get")
+    def test_only_user_still_attaches_auth(self, mock_get):
+        """只有 user 没有 pwd（罕见但合法）→ 也走带 auth 的 URL。"""
+        mock_resp = MagicMock(); mock_resp.status_code = 200; mock_resp.text = "1.1.1.1"
+        mock_get.return_value = mock_resp
+
+        test_socks_proxy("vps.example.com", 18443, user="cu")
+
+        args, kwargs = mock_get.call_args
+        self.assertIn("cu:@vps.example.com:18443", kwargs["proxies"]["http"])
+
 
 if __name__ == "__main__":
     unittest.main()

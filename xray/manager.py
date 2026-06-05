@@ -106,6 +106,71 @@ class XrayManager:
         """在服务器内部测试 socks5 代理（默认 18440）。返回结果字典。"""
         return service.test_internal_socks(self.client, port=port)
 
+    # -------- 复合动作：给 binding 类业务（rgIP / 巡检 / admin MCP）一行调 --------
+
+    def apply_proxy_binding(
+        self,
+        vps_port: int,
+        proxy_outbound: dict,
+        inbound_user: str,
+        inbound_pwd: str,
+    ) -> dict:
+        """往现有 xray config 增量加一组 binding 三件套并落到服务器上。
+
+        编排：read_config → add_proxy_binding → upload_config → validate_config → reload
+
+        参数同 xc.add_proxy_binding（透传）。
+        返回追加后的完整 config dict —— 业务侧拿这个 dict 备份，失败时配合
+        rollback_proxy_binding 撤回。
+
+        抛错（透传 atom 层，业务侧负责捕获并转 status）：
+            PortConflictError / PortAlreadyBoundError / OutboundTagConflictError
+                ← add 阶段
+            ConfigWriteError                                                          ← upload 阶段
+            ConfigValidationError                                                     ← validate 阶段
+            ReloadFailedError                                                         ← reload 阶段
+        """
+        logger.info(
+            "XrayManager.apply_proxy_binding: vps_port=%s outbound_tag=%s → applying",
+            vps_port, proxy_outbound.get("tag", "?"),
+        )
+        current = xc.read_config(self.client)
+        new_config = xc.add_proxy_binding(
+            current, vps_port, proxy_outbound, inbound_user, inbound_pwd,
+        )
+        xc.upload_config(self.client, new_config)
+        xc.validate_config(self.client)
+        service.reload(self.client)
+        logger.info(
+            "XrayManager.apply_proxy_binding: vps_port=%s → ok",
+            vps_port,
+        )
+        return new_config
+
+    def rollback_proxy_binding(self, vps_port: int, last_config: dict) -> None:
+        """撤回一组 binding：从 last_config 删 + 上传 + reload。
+
+        参数：
+            vps_port    : 要撤回的端口
+            last_config : apply_proxy_binding 返回的 config dict（已含目标 binding）
+
+        幂等：如果 last_config 里没有该 binding 也不会抛错（remove_proxy_binding 静默 noop）；
+        但仍然会触发一次 upload + reload —— 业务侧只在确实需要回滚时调用即可。
+
+        不调 validate（remove 后的 config 拓扑只少不多，xray 校验过的 baseline 减条规则不会破坏语法）。
+        """
+        logger.info(
+            "XrayManager.rollback_proxy_binding: vps_port=%s → rolling back",
+            vps_port,
+        )
+        rolled = xc.remove_proxy_binding(last_config, vps_port)
+        xc.upload_config(self.client, rolled)
+        service.reload(self.client)
+        logger.info(
+            "XrayManager.rollback_proxy_binding: vps_port=%s → ok",
+            vps_port,
+        )
+
     # -------- 高层动作：业务调这一个就够 --------
 
     def ensure_installed_and_running(self) -> dict:
