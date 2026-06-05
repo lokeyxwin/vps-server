@@ -171,12 +171,15 @@ class TestValidateConfig(unittest.TestCase):
         self.assertIn("line 42", str(ctx.exception))
 
     @patch("xray.config.execute_command")
-    def test_uses_confdir_command(self, mock_exec):
+    def test_uses_single_file_command(self, mock_exec):
+        """Xray 26 实测：单文件 -c 模式才稳，confdir 容易被同目录脏文件连累。"""
         mock_exec.return_value = {"stdout": "", "stderr": "", "exit_code": 0}
         validate_config(MagicMock())
         args, _ = mock_exec.call_args
-        self.assertIn("xray run -test", args[1])
-        self.assertIn("-confdir", args[1])
+        self.assertIn("xray -test -c", args[1])
+        self.assertIn("config.json", args[1])
+        # 确保不再用 confdir 模式
+        self.assertNotIn("-confdir", args[1])
 
 
 # ============================================================

@@ -654,19 +654,23 @@ def upload_config(client: paramiko.SSHClient, config_dict: dict) -> None:
 # ============================================================
 
 def validate_config(client: paramiko.SSHClient) -> None:
-    """跑 `xray run -test -confdir /usr/local/etc/xray` 校验 config 语法。
+    """跑 `xray -test -c <config.json>` 校验 config 语法。
 
-    Xray 26.x 之后 CLI 改了，原本的 `xray test` 子命令不再存在，
-    `-test` 改成了 `run` 子命令的 flag（dry-run 模式，加载校验不实际 serve）。
+    Xray 26.x CLI 形态：
+    - 兼容老语法 `xray -test -c <file>` 单文件校验，成功打印 "Configuration OK"
+    - `xray run -test -confdir <dir>` 走目录扫描——但容易被同目录下的脏文件
+      （如 666clouds 镜像默认留的空 config2.json）连累校验失败
 
-    校验失败抛 ConfigValidationError，文案带 xray 的 stderr 便于定位。
+    选择单文件模式：业务自己控制 config 路径（DEFAULT_CONFIG_PATH），
+    不让目录里的其他无关文件影响校验。
+
+    校验失败抛 ConfigValidationError，文案带 xray 的 stdout/stderr 便于定位。
     业务一般在 upload_config 后、reload 前调一次，避免推坏 config 上线。
     """
-    # 用 confdir 而不是 -c <file>，让 xray 自己 glob 配置目录（更贴近 systemd 启动行为）
-    result = execute_command(client, "xray run -test -confdir /usr/local/etc/xray")
+    result = execute_command(client, f"xray -test -c {DEFAULT_CONFIG_PATH}")
     if result["exit_code"] != 0:
-        # xray 把校验错误打在 stdout 或 stderr，取两者拼起来
-        detail = (result["stderr"] or result["stdout"])[:300]
+        # xray 校验错误可能在 stdout 也可能在 stderr，两边都看
+        detail = ((result["stderr"] or "") + (result["stdout"] or ""))[:400]
         raise ConfigValidationError(
             f"{CONFIG_VALIDATION_FAILED_MESSAGE}: exit={result['exit_code']} "
             f"detail={detail}"
