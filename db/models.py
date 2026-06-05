@@ -32,7 +32,7 @@ class VPSRecord(Base):
     __tablename__ = "vps_record"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    # 服务商控制台域名（如 aliyun.com / racknerd.com），用于续费提醒与服务商维度归类
+    # 服务商控制台域名（如 aliyun.com ），用于续费提醒与服务商维度归类
     provider_domain: Mapped[str] = mapped_column(String(255), default="", nullable=False)
     ip: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     port: Mapped[int] = mapped_column(Integer, nullable=False, default=22)
@@ -52,6 +52,11 @@ class VPSRecord(Base):
     xray_installed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     xray_last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     xray_status_message: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+
+    # 业务端口区间（18441-18450）内的可用端口数
+    # 由 init_vps_xray 端口审计时更新；后续 IP 业务挑 VPS 时按这个降序排
+    # 已被 OS 占用 / 在 COMMON_RESERVED 列表 / 已被 xray 配置绑定的端口都不算
+    idle_port_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False

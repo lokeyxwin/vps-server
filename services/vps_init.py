@@ -88,7 +88,8 @@ def init_vps_xray(ip: str) -> dict:
             # ⑤.4 端口审计：
             #   a. 抄录已部署在 xray 里的客户端 inbound 绑定（rgvps 重装场景兜底）
             #   b. 扫业务端口区间 18441-18450 的可用集合（已扣 OS 占用 + 默认排除）
-            #   ★ 当前 mock 阶段：只 log 不入库；业务跑通后再接 proxy 表 / VPS 计数字段
+            #   c. 把可用端口数写到 VPS 表的 idle_port_count
+            #   d. 每条 existing_binding 抄录到 proxy 表（schema 还没定，先 stub log）
             existing_bindings = manager.import_existing_bindings()
             available_ports = vps.get_available_ports(
                 config.PROXY_PORT_RANGE_START,
@@ -110,6 +111,21 @@ def init_vps_xray(ip: str) -> dict:
                 len(existing_bindings),
                 sorted(available_ports),
             )
+
+            # ⑤.4.c 写 VPS 表的 idle_port_count（独立短事务，跟 _update_xray_state 解耦）
+            _set_idle_port_count(ip, len(available_ports))
+
+            # ⑤.4.d proxy 表抄录 stub —— schema 没定，先 log 出来观察形状
+            #   TODO: proxy 表 schema 定型后，把下面 log 改成真 ORM insert
+            for binding in existing_bindings:
+                logger.info(
+                    "[proxy stub] would insert proxy_record: vps_ip=%s "
+                    "vps_port=%d protocol=%s upstream_host=%s egress_ip=%s "
+                    "country=%s inbound_user=%s",
+                    ip, binding["port"], binding["protocol"],
+                    binding["upstream_host"], binding["egress_ip"],
+                    binding["egress_country"], binding["inbound_user"],
+                )
 
             # ⑤.5 开服务器本地防火墙 18440-18450（best-effort，失败只警告不阻塞）
             try:
@@ -249,6 +265,18 @@ def _save_failure_with_context(ip: str, manager: XrayManager, exc: XrayError) ->
         version=partial_version if partial_version else None,
         installed_at=datetime.now() if partial_installed else None,
     )
+
+
+def _set_idle_port_count(ip: str, count: int) -> None:
+    """单独把端口审计算出的可用端口数写到 VPS 表。
+
+    跟 _update_xray_state 分开是因为：
+    - xray 状态机字段（status/version/installed_at/...）跟端口数是两件事
+    - 端口审计可能频繁触发（每次 rgvps / 巡检），不该牵连 xray_status 更新
+    """
+    with session_scope() as session:
+        record = session.query(VPSRecord).filter_by(ip=ip).one()
+        record.idle_port_count = count
 
 
 def _update_xray_state(

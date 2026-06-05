@@ -213,6 +213,9 @@ class TestInstallXrayMocked(unittest.TestCase):
         xm.import_existing_bindings.assert_called_once()
         vps_ctx.get_available_ports.assert_called_once_with(18441, 18450)
 
+        # 验证 idle_port_count 真落库（核心断言）
+        self.assertEqual(_get_vps(TEST_IP).idle_port_count, 10)
+
     @patch("services.vps_init.test_socks_proxy")
     @patch("services.vps_init.open_tcp_port_range")
     @patch("services.vps_init.XrayManager")
@@ -249,6 +252,9 @@ class TestInstallXrayMocked(unittest.TestCase):
         self.assertEqual(len(audit["existing_bindings"]), 2)
         # binding 内容透传完整
         self.assertEqual(audit["existing_bindings"][0]["egress_country"], "JP")
+
+        # idle_port_count 真落库
+        self.assertEqual(_get_vps(TEST_IP).idle_port_count, 8)
 
     @patch("services.vps_init.XrayManager")
     @patch("services.vps_init.VPSSession")
