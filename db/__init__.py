@@ -1,6 +1,6 @@
 from db.base import Base
 from db.engine import engine, get_engine
-from db.models import VPSRecord, XrayStatus
+from db.models import ProxyRecord, ProxyStatus, VPSRecord, XrayStatus
 from db.session import SessionLocal, session_scope
 
 __all__ = [
@@ -11,4 +11,6 @@ __all__ = [
     "session_scope",
     "VPSRecord",
     "XrayStatus",
+    "ProxyRecord",
+    "ProxyStatus",
 ]
