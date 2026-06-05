@@ -222,3 +222,124 @@ class ProxyRecord(Base):
             f"egress={self.egress_ip}@{self.egress_country or '?'} "
             f"status={self.status}>"
         )
+
+
+# ============================================================
+# IP（上游代理凭据）
+# ============================================================
+
+class IPProtocol:
+    """上游代理协议常量。"""
+
+    SOCKS5 = "socks5"
+    HTTP = "http"
+
+
+class IPRecord(Base):
+    """上游代理 ORM 模型（一行 = 一条 egress_ip）。
+
+    egress_ip 是业务身份键（唯一），同一入口 entry_host 可对应多条 egress
+    （云服务商常给一个域名入口、分多条出口 IP），所以 entry_host 不做 unique。
+
+    地区字段 (country_code / country_name / city / region_name) 来自 geoip 权威
+    （core.geoip.lookup_egress 返回值，由业务层 rgIP 流程内 ping 通过后落库）。
+    用户填的 user_label 是自由备注，不参与查询匹配。
+
+    密码字段 password_encrypted 同 VPSRecord 约定：直接拿到的是密文 bytes，
+    明文要走 get_password()。
+    """
+
+    __tablename__ = "ip_record"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # ---------- 上游入口（云服务商控制台凭据）----------
+    entry_host: Mapped[str] = mapped_column(String(255), nullable=False)
+    entry_port: Mapped[int] = mapped_column(Integer, nullable=False)
+    username: Mapped[str] = mapped_column(String(128), nullable=False)
+    password_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    protocol: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    # ---------- 出口（业务身份键）----------
+    egress_ip: Mapped[str] = mapped_column(
+        String(64), unique=True, index=True, nullable=False
+    )
+
+    # ---------- 地区身份（geoip 权威）----------
+    # country_code 是查询主键；user MCP 的"美国/SG"等查询走中英文映射 → country_code
+    country_code: Mapped[str] = mapped_column(String(8), default="", nullable=False)
+    country_name: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    city: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    region_name: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+
+    # ---------- 元信息 ----------
+    provider_domain: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    expire_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # 1=可用 / 0=过期；巡检模块维护，业务读这个 + 兜底比 expire_date
+    is_active: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    # 用户自定义备注，不参与查询匹配
+    user_label: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    # ---------- 业务方法 ----------
+
+    def get_password(self) -> str:
+        """获取上游代理明文密码。仅在拼 xray outbound 配置时调用。"""
+        from core.security import decrypt_password
+        return decrypt_password(self.password_encrypted)
+
+    @classmethod
+    def from_form(
+        cls,
+        *,
+        entry_host: str,
+        entry_port: int,
+        username: str,
+        password: str,
+        protocol: str,
+        egress_ip: str,
+        provider_domain: str = "",
+        expire_date: date | None = None,
+        user_label: str = "",
+        geo: dict | None = None,
+    ) -> "IPRecord":
+        """从表单/入参构造 IP 记录。
+
+        password 在这里完成加密。
+        geo 是 core.geoip.lookup_egress 的返回 dict（成功时含 country_code/
+        country_name/city/region_name；失败兜底 None → 全落空串）。
+        """
+        from core.security import encrypt_password
+        geo = geo or {}
+        return cls(
+            entry_host=entry_host,
+            entry_port=entry_port,
+            username=username,
+            password_encrypted=encrypt_password(password),
+            protocol=protocol,
+            egress_ip=egress_ip,
+            country_code=geo.get("country_code", ""),
+            country_name=geo.get("country_name", ""),
+            city=geo.get("city", ""),
+            region_name=geo.get("region_name", ""),
+            provider_domain=provider_domain,
+            expire_date=expire_date,
+            user_label=user_label,
+        )
+
+    def __repr__(self) -> str:
+        # 不打印 username / password 等敏感字段
+        return (
+            f"<IPRecord id={self.id} egress={self.egress_ip} "
+            f"country={self.country_code or '?'} city={self.city or '?'} "
+            f"active={self.is_active}>"
+        )
