@@ -34,10 +34,11 @@
 
 | 工具 | 住哪 | 拿来干啥 |
 |------|------|---------|
-| `VPSSession` 类（绑 SSH 会话） | `ssh/session.py` | SSHWorker 拿来敲门，`with VPSSession(ip,user,pwd,port) as sess:` |
+| `VPSSession` 类（绑 SSH 会话） | `ssh/session.py` | SSHWorker 拿来敲门，`with VPSSession(ip,user,pwd,port) as sess:`（**默认 `connect_timeout=30s`**，T-04 新增） |
 | `sess.get_system_info()` | `ssh/session.py`（VPSSession 的方法） | 一次拿 OS name/version |
+| `connect_with_retry(ip,user,pwd,port,connect_timeout=30)` 函数 | `ssh/ops.py` | SSH 连接 **3 次重试 / 10s 间隔 / timeout+refused 也算重试**（T-04 新增，VPSSession 内部已切走此路径，业务层不用直接调）|
 | 加密 / 解密 | `toolbox/security.py` | 入库密码加密、读库解密（VPSRecord 工厂方法已经包好） |
-| ORM 模型 | `db/models.py`（待 task/01 重塑） | VPSRecord / VPSTask / VPSStage / TaskStatus |
+| ORM 模型 | `db/models.py` | VPSRecord / VPSTask / VPSStage（**2 值** connectable/running）/ TaskStatus（**4 值** pending/in_progress/done/failed）← T-01/T-02 已就位 |
 | 日志 | `log.get_logger(__name__)` | 现有的 LayeredFormatter 自动分两层风格 |
 
 #### 找不到工具？**先报告，等批准，再造**
