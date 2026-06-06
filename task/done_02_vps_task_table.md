@@ -298,6 +298,44 @@ TC-12  __repr__ 输出 id/vps_id/status/retry_count,
 
 ---
 
+### 2026-06-07 完工记录（实现者填）
+
+**结论**: 无新增产品工具。本任务完全按清单建 `TaskStatus` 常量类 + `VPSTask`
+ORM 模型,没造任何新业务方法。测试文件内的 `_make_in_memory_engine()`
++ `_new_vps()` 是测试 fixture (用于建独立 in-memory SQLite + 给 task FK 喂一台
+VPS),不是产品工具。
+
+**实际改动清单**:
+
+1. `db/models.py`(纯加法,不动 T-01 已落字段)
+   - import 加 `Index`(给 VPSTask 复合索引用)
+   - 新增 `class TaskStatus`(4 常量: PENDING / IN_PROGRESS / DONE / FAILED)
+   - 新增 `class VPSTask`(12 字段 + 2 复合索引)
+     - `vps_id` FK 指向 `vps_record.id` 带 `ondelete=RESTRICT`
+     - `retry_count / next_run_at / worker_id / locked_until` 保留但语义改为
+       XrayWorker 内部用(自管退避 + 软锁),不驱动 status 状态机
+     - `last_error_code / last_error_msg` 字段就位(spec v4 §5 错误住任务表)
+     - `__repr__` 含 id/vps/status/retry,不含 last_error_msg
+
+2. `db/__init__.py`
+   - import + `__all__` 加 `VPSTask` + `TaskStatus`
+
+3. 新建 `tests_behavior/_data_structures/test_vps_task.py`
+   - 12 TC,11 OK + 1 intentional skip (TC-11 抢锁原子性等真机 PG/MySQL 多连接环境)
+   - 顶部 / 尾部按 `tests_behavior/README.md` 三段约定
+   - 独立 in-memory SQLite + 开 `PRAGMA foreign_keys=ON` (TC-07 验 FK 报错需要)
+   - 测试用 `Session.get(VPSTask, id)` 新 API + `datetime.now(timezone.utc)`
+     (避免 SQLAlchemy 2.0 / Py 3.13 deprecation 噪音)
+
+**T-01 测试回归确认**: `tests_behavior._data_structures.test_vps_record_v4`
+8/8 仍过(0.016s)。T-01 / T-02 真独立。
+
+**12 TC 跑通时间**: 2026-06-07,1.134s,`OK (skipped=1)`。
+
+**未动**: services/* / xray/* / workers/* / tools/* / proxy/* (符合任务单 §不动 段)。
+
+---
+
 ## Claude 验收检查清单
 
 ```

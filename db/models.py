@@ -8,6 +8,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     String,
@@ -400,4 +401,96 @@ class IPRecord(Base):
             f"<IPRecord id={self.id} egress={self.egress_ip} "
             f"country={self.country_code or '?'} city={self.city or '?'} "
             f"active={self.is_active}>"
+        )
+
+
+# ============================================================
+# Task（异步任务表 —— worker 接力媒介）
+# ============================================================
+
+class TaskStatus:
+    """task 表通用状态机（vps_task / 未来 ip_task 共用）。
+
+    v4 拍板：只 4 个值。重试 / 退避 / 熔断细节藏在工人内部。
+
+    谁推进:
+      pending → in_progress    : worker 抢到锁
+      in_progress → done       : 干完成功
+      in_progress → failed     : 工人内部重试 N 次仍失败（终态）
+
+    关键约束:
+      没有 pending_retry：工人在 in_progress 期间内部循环重试
+                          （用 retry_count + next_run_at 自管退避）
+      没有 circuit_broken：retry_count >= N 直接标 failed
+    """
+
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    DONE = "done"
+    FAILED = "failed"
+
+
+class VPSTask(Base):
+    """VPS 装机 / 纳管类任务。XrayWorker 消费。
+
+    每条 = 一个 "装 xray / 启停 xray / 纳管" 活儿。
+    SSHWorker 入库 VPS 时建一条 pending，XrayWorker 扫表领活儿。
+
+    锁粒度 = task。worker 抢到 task = 抢到 task.vps_id 那台机的操作权
+    （CLAUDE.local.md §4：一台 VPS 同时只能被 1 个 worker 持锁）。
+
+    retry_count / next_run_at / worker_id / locked_until 这 4 个字段
+    **都给 XrayWorker 内部用**（自管退避 + 软锁），不驱动 status 状态机。
+    """
+
+    __tablename__ = "vps_task"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    vps_id: Mapped[int] = mapped_column(
+        ForeignKey("vps_record.id", ondelete="RESTRICT"),
+        nullable=False, index=True,
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(16), default=TaskStatus.PENDING, nullable=False
+    )
+    # XrayWorker 内部用：失败几次了，>= N 时升 failed 终态
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # XrayWorker 内部用：下次什么时候再试（退避时间），扫表条件
+    next_run_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), nullable=False
+    )
+
+    # 最近一次失败的错误代号 / 人话原因（spec v4 §5：错误只住任务表）
+    last_error_code: Mapped[str] = mapped_column(String(32), default="", nullable=False)
+    last_error_msg: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+
+    # 谁在锁着这条 + 锁过期时间（软锁，过期自动释放）
+    worker_id: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        # worker 扫表领活儿（每秒发生）：按 status='pending' + next_run_at <= now 查
+        Index("ix_vps_task_status_next_run", "status", "next_run_at"),
+        # 查"VPS#X 当前有没有任务在跑"（业务挑机时双表 join）
+        Index("ix_vps_task_vps_status", "vps_id", "status"),
+    )
+
+    def __repr__(self) -> str:
+        # 不打印 last_error_msg（长字段）
+        return (
+            f"<VPSTask id={self.id} vps={self.vps_id} "
+            f"status={self.status} retry={self.retry_count}>"
         )
