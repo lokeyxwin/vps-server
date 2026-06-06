@@ -256,6 +256,46 @@ TC-08  __repr__ 输出含 stage 字段,
 
 ---
 
+### 2026-06-06 完工记录（实现者填）
+
+**结论**：无新增工具。本任务完全按清单改字段 / 改名 / 删字段 / 去 default，没造任何
+新类、函数、方法、常量。新测试文件 `tests_behavior/_data_structures/test_vps_record_v4.py`
+内部的 `_make_in_memory_engine()` 是测试 fixture（不是产品工具），不算"新增工具"，仅给
+本测试文件用 —— 避免新测试绑到 `db.session.SessionLocal`（那个绑在 dev DB 上会污染）。
+
+**实际改动清单**：
+
+1. `db/models.py`
+   - `class XrayStatus` (5 值) → `class VPSStage` (2 值: CONNECTABLE/RUNNING)
+   - `xray_status` → `stage`（default=VPSStage.CONNECTABLE）
+   - `idle_port_count` → `used_port_count`（default=0）
+   - **整删** `xray_status_message` 字段（错误改住 vps_task）
+   - `port` 字段去 `default=22`（只保留 nullable=False）
+   - `from_form(port: int = 22, ...)` → `from_form(port: int, ...)`（必填）
+   - `__repr__` 加 `stage=`、去 `user=`（避免泄漏 username）
+
+2. `db/__init__.py`
+   - import 和 `__all__` 把 `XrayStatus` 换成 `VPSStage`
+
+3. 新建 `tests_behavior/__init__.py`、`tests_behavior/_data_structures/__init__.py`
+   （unittest 包发现需要）
+
+4. 新建 `tests_behavior/_data_structures/test_vps_record_v4.py`
+   - 8 个 TC 全过（`uv run python -m unittest ... -v` 输出 `OK`）
+   - 顶部 / 尾部按 `tests_behavior/README.md` 三段约定写
+   - 用独立 in-memory SQLite engine + 自建 sessionmaker，**不污染** dev DB
+
+**未动（本任务接受副作用）**：
+- `services/*`（vps_register.py / vps_init.py / ip_register.py）—— 仍引用旧 `XrayStatus`
+  / `xray_status` / `xray_status_message` / `idle_port_count`，会 ImportError / AttributeError
+- `xray/manager.py`、`xray/service.py`、`xray/config.py` —— 同上
+- `test/test_vps_model.py` 等旧测试 —— 仍 import 旧 `XrayStatus`，会失败
+- 这些 fix 留给 T-04 / T-06 / T-07 后续任务，符合任务单 §不动 段预告。
+
+**8 TC 跑通时间**：2026-06-06，耗时 0.037s（独立 in-memory SQLite）。
+
+---
+
 ## Claude 验收检查清单
 
 ```

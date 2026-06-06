@@ -19,15 +19,22 @@ from sqlalchemy.orm import Mapped, mapped_column
 from db.base import Base
 
 
-class XrayStatus:
-    """xray 在 VPS 上的生命周期状态。"""
+class VPSStage:
+    """VPS 占用状态机（2 值，spec v4 拍板）。
 
-    NOT_INSTALLED = "not_installed"      # 初始状态
-    INSTALLING = "installing"            # 安装中
-    INSTALL_FAILED = "install_failed"    # 安装失败
-    RUNNING = "running"                  # 服务运行中
-    STOPPED = "stopped"                  # 已停止
-    UNINSTALLED = "uninstalled"          # 已卸载
+    谁推进:
+      SSHWorker 入库时    → 永远写 CONNECTABLE（spec v4 §5 不变量）
+      抢到这台机的工人     → 写 RUNNING 锁住（XrayWorker / 未来巡检等）
+      工人干完释放         → 改回 CONNECTABLE
+      工人失败            → 保持 RUNNING 锁住等人介入（spec v4 Q2 拍板）
+
+    业务含义:
+      CONNECTABLE = 此刻没工人在用 + 验证过能连，可被任意工人抢
+      RUNNING     = 有任意工人正在用，别的工人挑机时跳过
+    """
+
+    CONNECTABLE = "connectable"
+    RUNNING = "running"
 
 
 class VPSRecord(Base):
@@ -44,7 +51,8 @@ class VPSRecord(Base):
     # 服务商控制台域名（如 aliyun.com ），用于续费提醒与服务商维度归类
     provider_domain: Mapped[str] = mapped_column(String(255), default="", nullable=False)
     ip: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
-    port: Mapped[int] = mapped_column(Integer, nullable=False, default=22)
+    # port 业务层必填强制（spec v4 §2），ORM 不兜底 default
+    port: Mapped[int] = mapped_column(Integer, nullable=False)
     username: Mapped[str] = mapped_column(String(64), nullable=False)
     password_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
 
@@ -55,19 +63,17 @@ class VPSRecord(Base):
     # 1=可用 / 0=过期；巡检模块维护，业务层挑 VPS 时读这个 + 兜底比 expire_date
     is_active: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
-    # ---------- xray 生命周期 ----------
-    xray_status: Mapped[str] = mapped_column(
-        String(32), default=XrayStatus.NOT_INSTALLED, nullable=False
+    # ---------- 占用状态机（spec v4：2 值，SSHWorker 写 connectable，抢机工人写 running）----------
+    stage: Mapped[str] = mapped_column(
+        String(32), default=VPSStage.CONNECTABLE, nullable=False
     )
+    # xray_version：SSHWorker 永远不写（留空字符串），XrayWorker 第一次干完写
     xray_version: Mapped[str] = mapped_column(String(32), default="", nullable=False)
     xray_installed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     xray_last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    xray_status_message: Mapped[str] = mapped_column(String(255), default="", nullable=False)
 
-    # 业务端口区间（18441-18450）内的可用端口数
-    # 由 init_vps_xray 端口审计时更新；后续 IP 业务挑 VPS 时按这个降序排
-    # 已被 OS 占用 / 在 COMMON_RESERVED 列表 / 已被 xray 配置绑定的端口都不算
-    idle_port_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # XrayWorker 纳管时记录已被 xray 绑定的端口数（spec v4：原 idle_port_count 改名）
+    used_port_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
@@ -92,13 +98,17 @@ class VPSRecord(Base):
         ip: str,
         username: str,
         password: str,
-        port: int = 22,
+        port: int,
         os_name: str = "",
         os_version: str = "",
         expire_date: date | None = None,
         provider_domain: str = "",
     ) -> "VPSRecord":
-        """从表单/入参构造 VPS 记录，密码在这里完成加密。"""
+        """从表单/入参构造 VPS 记录，密码在这里完成加密。
+
+        port 必填（spec v4 §2：业务层强制，ORM 不兜底 default=22）。
+        os_name / os_version 可空（spec v4 §6：SSH 上去读不到留空入库）。
+        """
         from toolbox.security import encrypt_password
         return cls(
             ip=ip,
@@ -112,8 +122,8 @@ class VPSRecord(Base):
         )
 
     def __repr__(self) -> str:
-        # 注意：不打印任何密码字段
-        return f"<VPSRecord id={self.id} ip={self.ip} user={self.username}>"
+        # 注意：不打印任何密码字段；stage 暴露给排障
+        return f"<VPSRecord id={self.id} ip={self.ip} stage={self.stage}>"
 
 
 # ============================================================

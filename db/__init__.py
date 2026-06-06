@@ -6,7 +6,7 @@ from db.models import (
     ProxyRecord,
     ProxyStatus,
     VPSRecord,
-    XrayStatus,
+    VPSStage,
 )
 from db.session import SessionLocal, session_scope
 
@@ -17,7 +17,7 @@ __all__ = [
     "SessionLocal",
     "session_scope",
     "VPSRecord",
-    "XrayStatus",
+    "VPSStage",
     "ProxyRecord",
     "ProxyStatus",
     "IPRecord",
