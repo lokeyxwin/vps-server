@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from db import Base, ProxyRecord, ProxyStatus, VPSRecord, XrayStatus, get_engine, session_scope
 from services.vps_init import init_vps_xray
-from core import (
+from ssh.ops import (
     AuthFailedError,
     ConnectTimeoutError,
     ConnectRefusedError,
@@ -460,7 +460,7 @@ class TestInstallXrayMocked(unittest.TestCase):
         self, mock_vps_cls, mock_xray_cls, mock_fw, mock_ext,
     ):
         """防火墙开放失败应该只警告，不阻塞后续流程。"""
-        from core import FirewallOpenError
+        from toolbox.firewall import FirewallOpenError
         _seed_vps(TEST_IP)
         _stub_vps_manager(mock_vps_cls)
         _stub_xray_manager(mock_xray_cls)

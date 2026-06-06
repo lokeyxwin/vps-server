@@ -1,7 +1,7 @@
 """服务器端口探测工具。
 
 提供查"VPS 上某范围内哪些端口被占用"的能力，给 rgIP 业务挑空闲端口用。
-归在 core/ 而不是 xray/ 或 ip/——`ss -tlnp` 是通用 Linux 操作，跟任何具体
+归在 toolbox/ 而不是 xray/ 或 ip/——`ss -tlnp` 是通用 Linux 操作，跟任何具体
 服务无关，未来 caddy / 别的业务也能复用。
 """
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import paramiko
 
-from core.ssh import execute_command
+from ssh.ops import execute_command
 from log import get_logger
 
 

@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from cryptography.fernet import Fernet
 
 import config
-from core.security import (
+from toolbox.security import (
     encrypt_password,
     decrypt_password,
     reset_cipher,

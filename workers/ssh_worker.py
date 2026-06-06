@@ -8,7 +8,7 @@
   tools/rgvps.py (MCP 工具入口)
 
 我会用到的工具:
-  - core.session.VPSSession (SSH 通话手柄类,有状态)
+  - ssh.session.VPSSession (SSH 通话手柄类,有状态)
   - xray.manager.XrayManager.version (只这一个方法,看 xray 装没装)
   - db.models (VPSRecord / VPSTask 等)
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import paramiko
 
-from core.ssh import execute_command
+from ssh.ops import execute_command
 from log import get_logger
 
 

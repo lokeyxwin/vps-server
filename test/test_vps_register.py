@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from db import Base, VPSRecord, XrayStatus, get_engine, session_scope
 from services.vps_register import register_vps
-from core import (
+from ssh.ops import (
     AuthFailedError,
     ConnectTimeoutError,
     ConnectRefusedError,

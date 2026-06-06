@@ -1,4 +1,4 @@
-"""core/firewall.py 单测：探测 + 开放端口。"""
+"""toolbox/firewall.py 单测：探测 + 开放端口。"""
 
 import os
 import sys
@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from core.firewall import (
+from toolbox.firewall import (
     detect_firewall,
     open_tcp_port_range,
     FirewallOpenError,
@@ -22,12 +22,12 @@ def _exec_result(stdout="", stderr="", exit_code=0):
 
 
 class TestDetectFirewall(unittest.TestCase):
-    @patch("core.firewall.execute_command")
+    @patch("toolbox.firewall.execute_command")
     def test_detect_firewalld(self, mock_exec):
         mock_exec.return_value = _exec_result(stdout="active\n")
         self.assertEqual(detect_firewall(MagicMock()), FIREWALL_FIREWALLD)
 
-    @patch("core.firewall.execute_command")
+    @patch("toolbox.firewall.execute_command")
     def test_detect_ufw(self, mock_exec):
         # 第一次问 firewalld → 不 active；第二次问 ufw → active
         mock_exec.side_effect = [
@@ -36,7 +36,7 @@ class TestDetectFirewall(unittest.TestCase):
         ]
         self.assertEqual(detect_firewall(MagicMock()), FIREWALL_UFW)
 
-    @patch("core.firewall.execute_command")
+    @patch("toolbox.firewall.execute_command")
     def test_detect_none(self, mock_exec):
         mock_exec.side_effect = [
             _exec_result(stdout="inactive\n"),
@@ -46,7 +46,7 @@ class TestDetectFirewall(unittest.TestCase):
 
 
 class TestOpenTcpPortRange(unittest.TestCase):
-    @patch("core.firewall.execute_command")
+    @patch("toolbox.firewall.execute_command")
     def test_open_firewalld_success(self, mock_exec):
         mock_exec.side_effect = [
             _exec_result(stdout="active\n"),     # detect
@@ -56,7 +56,7 @@ class TestOpenTcpPortRange(unittest.TestCase):
         result = open_tcp_port_range(MagicMock(), 18440, 18450)
         self.assertEqual(result, FIREWALL_FIREWALLD)
 
-    @patch("core.firewall.execute_command")
+    @patch("toolbox.firewall.execute_command")
     def test_open_firewalld_add_fails(self, mock_exec):
         mock_exec.side_effect = [
             _exec_result(stdout="active\n"),
@@ -66,7 +66,7 @@ class TestOpenTcpPortRange(unittest.TestCase):
         with self.assertRaises(FirewallOpenError):
             open_tcp_port_range(MagicMock(), 18440, 18450)
 
-    @patch("core.firewall.execute_command")
+    @patch("toolbox.firewall.execute_command")
     def test_open_ufw_success(self, mock_exec):
         mock_exec.side_effect = [
             _exec_result(stdout="inactive\n"),       # detect firewalld
@@ -76,7 +76,7 @@ class TestOpenTcpPortRange(unittest.TestCase):
         result = open_tcp_port_range(MagicMock(), 18440, 18450)
         self.assertEqual(result, FIREWALL_UFW)
 
-    @patch("core.firewall.execute_command")
+    @patch("toolbox.firewall.execute_command")
     def test_open_none_does_nothing(self, mock_exec):
         mock_exec.side_effect = [
             _exec_result(stdout="inactive\n"),

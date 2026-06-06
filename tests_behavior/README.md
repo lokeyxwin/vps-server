@@ -1,7 +1,7 @@
 # tests_behavior/ —— 新代码的行为测试
 
 跟旧 `test/` 区分：旧 `test/` 是 legacy 单元测试，沉淀在那不动；
-新代码（`workers/` + `kits/`）的所有测试都进这里。
+新代码（`workers/` + `xray/manager.py`）的所有测试都进这里。
 
 ## 目录组织：按工人分
 

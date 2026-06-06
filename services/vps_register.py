@@ -15,12 +15,12 @@ from datetime import date
 from db import VPSRecord, session_scope
 from log import get_logger
 from services.vps_init import init_vps_xray
-from core import (
+from ssh.ops import (
     AuthFailedError,
     ConnectTimeoutError,
     ConnectRefusedError,
-    VPSSession,
 )
+from ssh.session import VPSSession
 
 
 logger = get_logger(__name__)

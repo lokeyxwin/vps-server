@@ -42,10 +42,11 @@
    worker 后台轮询消费;状态机字段:pending / in_progress / pending_retry /
    done / failed / circuit_broken。
 
-3. **工具箱(kit) = 软件操作工具集** —— `kits/install_<软件>/` 拆三格
-   (service.py / config.py / probe.py),被动方法集,可被多个 worker 共享。
-   xray 工具箱的"加配置"格子可同时给 IPProbeWorker 和 ProxyDeployWorker 用,
-   但"装/启停"格子只给 XrayWorker 用,**靠 import 自然分界**。
+3. **工具箱 = xray/manager.py::XrayManager** —— 本项目就 xray 一个软件领域,
+   不拆 `kits/`,直接复用现有 `xray/manager.py`。XrayManager 是对象式工具箱,
+   被工人 import 实例化使用。新方法直接写在类里,不再绕 service.py / config.py。
+   旧 `xray/service.py` + `xray/config.py` 作为代码片段参照保留,
+   **新代码完工 + 真机验证后整体删除**(见本项目代码组织策略)。
 
 4. **资源池协调** —— 一台 VPS 同时只能被 1 个 worker 持锁(task.locked_until
    软锁,worker 抢到 task = 抢到 task.vps_id 那台机的操作权),避免装机和挂代理
@@ -94,6 +95,7 @@
 - 资源争抢被裁判:VPS 同时只 1 worker 操作
 - 内部步骤完全藏在后端,agent 无法越权
 - 旧 services/ 留着作对照,新代码崩了能 fallback 看老逻辑
+- 旧 `xray/service.py` + `xray/config.py` 同样留着作片段参照,**完工后整体删除**
 - worker / kit / task 体系是可复用模式:加新软件 = 加新 kit,加新业务 = 加新 worker,
   加新工具 = 加新 tools/<name>.py
 
@@ -142,7 +144,8 @@
 - 每个 worker 写 `tests_behavior/<worker>/spec.md`(行为规约)
 - `db/models.py` 新增 `Task` 表
 - 实现 4 个工人:SSHWorker / XrayWorker / IPProbeWorker / ProxyDeployWorker
-- 实现 3 个工具箱格子:`kits/install_xray/{service,config,probe}.py`
+- 重写 `xray/manager.py::XrayManager`:新方法全部直接在类里写实现,
+  不 import `xray/service.py` 也不 import `xray/config.py`
 - MCP 入口工具改造:rgvps / rgip 从同步执行改成"建 task 立刻返回"
 - 新增状态查询 MCP 工具:`get_vps_registration_status` /
   `get_ip_registration_status`

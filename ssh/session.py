@@ -1,6 +1,6 @@
 """VPSSession 类：封装一次 SSH 会话的生命周期。
 
-跟 core/ssh.py 同层（基础设施），不感知 DB、不感知业务。
+跟 ssh/ops.py 同层（基础设施），不感知 DB、不感知业务。
 所有领域的 Manager 类（XrayManager / 未来 IP/Proxy）通过它拿到底层 client。
 """
 
@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import paramiko
 
-from core.ports import (
+from toolbox.ports import (
     compute_available_ports,
     get_used_ports,
     is_port_free,
 )
-from core.ssh import (
+from ssh.ops import (
     connect_server,
     close_server,
     execute_command,
@@ -99,7 +99,7 @@ class VPSSession:
         self._ensure_connected()
         return get_system_info(self._client)
 
-    # -------- 端口探测（包装 core.ports，业务调起来不用再传 client）--------
+    # -------- 端口探测（包装 toolbox.ports，业务调起来不用再传 client）--------
 
     def is_port_free(self, port: int) -> bool:
         """查单个端口在 VPS 上是否空闲。"""
@@ -119,7 +119,7 @@ class VPSSession:
     ) -> set[int]:
         """一次性算出区间内可用端口集合（已扣掉 OS 占用 + exclude）。
 
-        exclude 不传走 core.ports.COMMON_RESERVED_PORTS（22/443/3306 等）。
+        exclude 不传走 toolbox.ports.COMMON_RESERVED_PORTS（22/443/3306 等）。
         业务用法：vps.get_available_ports(18441, 18450) 直接拿可用集合。
         """
         used = self.get_used_ports(start_port, end_port)

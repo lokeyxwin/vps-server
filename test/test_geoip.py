@@ -1,4 +1,4 @@
-"""core/geoip.py 单元测试。
+"""toolbox/geoip.py 单元测试。
 
 策略：mock requests.get 的返回 / 异常，不实际打 ipinfo.io。
 覆盖：
@@ -23,7 +23,7 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import config
-from core.geoip import lookup_egress
+from toolbox.geoip import lookup_egress
 
 
 def _mock_response(status_code=200, json_data=None, text="", raises=None):
@@ -48,7 +48,7 @@ class TestLookupEgress(unittest.TestCase):
 
     # ---------- 成功路径 ----------
 
-    @patch("core.geoip.requests.get")
+    @patch("toolbox.geoip.requests.get")
     def test_success_full_fields(self, mock_get):
         mock_get.return_value = _mock_response(json_data={
             "ip": "8.8.8.8",
@@ -66,7 +66,7 @@ class TestLookupEgress(unittest.TestCase):
         self.assertEqual(result["region_name"], "California")
         self.assertEqual(result["raw"]["org"], "AS15169 Google LLC")
 
-    @patch("core.geoip.requests.get")
+    @patch("toolbox.geoip.requests.get")
     def test_success_only_country(self, mock_get):
         """部分 IP 在 ipinfo 数据库里只有 country，city/region 为空。"""
         mock_get.return_value = _mock_response(json_data={
@@ -79,7 +79,7 @@ class TestLookupEgress(unittest.TestCase):
         self.assertEqual(result["city"], "")
         self.assertEqual(result["region_name"], "")
 
-    @patch("core.geoip.requests.get")
+    @patch("toolbox.geoip.requests.get")
     def test_unknown_iso_country_name_empty(self, mock_get):
         """ISO 码不在本地映射表 → country_code 落库，country_name 留空。"""
         mock_get.return_value = _mock_response(json_data={
@@ -92,7 +92,7 @@ class TestLookupEgress(unittest.TestCase):
         self.assertEqual(result["country_name"], "")
         self.assertEqual(result["city"], "Nowhere")
 
-    @patch("core.geoip.requests.get")
+    @patch("toolbox.geoip.requests.get")
     def test_country_code_uppercased(self, mock_get):
         """ISO 码标准化为大写（防御 API 返回小写）。"""
         mock_get.return_value = _mock_response(json_data={
@@ -104,7 +104,7 @@ class TestLookupEgress(unittest.TestCase):
 
     # ---------- token 行为 ----------
 
-    @patch("core.geoip.requests.get")
+    @patch("toolbox.geoip.requests.get")
     def test_token_attached_when_present(self, mock_get):
         mock_get.return_value = _mock_response(json_data={"ip": "1.1.1.1", "country": "US"})
         lookup_egress("1.1.1.1")
@@ -112,7 +112,7 @@ class TestLookupEgress(unittest.TestCase):
         self.assertIn("token", kwargs["params"])
         self.assertEqual(kwargs["params"]["token"], "test-token-fake")
 
-    @patch("core.geoip.requests.get")
+    @patch("toolbox.geoip.requests.get")
     def test_no_token_anonymous_mode(self, mock_get):
         config.IPINFO_TOKEN = ""
         mock_get.return_value = _mock_response(json_data={"ip": "1.1.1.1", "country": "US"})
@@ -125,7 +125,7 @@ class TestLookupEgress(unittest.TestCase):
 
     # ---------- 失败兜底 ----------
 
-    @patch("core.geoip.requests.get")
+    @patch("toolbox.geoip.requests.get")
     def test_429_returns_empty(self, mock_get):
         mock_get.return_value = _mock_response(status_code=429, text="rate limited")
         result = lookup_egress("1.1.1.1")
@@ -133,14 +133,14 @@ class TestLookupEgress(unittest.TestCase):
         self.assertEqual(result["city"], "")
         self.assertIsNone(result["raw"])
 
-    @patch("core.geoip.requests.get")
+    @patch("toolbox.geoip.requests.get")
     def test_5xx_returns_empty(self, mock_get):
         mock_get.return_value = _mock_response(status_code=503, text="service unavailable")
         result = lookup_egress("1.1.1.1")
         self.assertEqual(result["country_code"], "")
         self.assertIsNone(result["raw"])
 
-    @patch("core.geoip.requests.get")
+    @patch("toolbox.geoip.requests.get")
     def test_network_error_returns_empty(self, mock_get):
         mock_get.side_effect = ConnectionError("dns failed")
         result = lookup_egress("1.1.1.1")
@@ -149,7 +149,7 @@ class TestLookupEgress(unittest.TestCase):
         self.assertEqual(result["region_name"], "")
         self.assertIsNone(result["raw"])
 
-    @patch("core.geoip.requests.get")
+    @patch("toolbox.geoip.requests.get")
     def test_json_decode_error_returns_empty(self, mock_get):
         mock_get.return_value = _mock_response(
             status_code=200, text="<html>nginx 502</html>", raises=ValueError("not json"),
@@ -158,7 +158,7 @@ class TestLookupEgress(unittest.TestCase):
         self.assertEqual(result["country_code"], "")
         self.assertIsNone(result["raw"])
 
-    @patch("core.geoip.requests.get")
+    @patch("toolbox.geoip.requests.get")
     def test_bogon_returns_empty(self, mock_get):
         """ipinfo 对私有 IP / bogon 返回 {bogon: true}，不能当合法 geo。"""
         mock_get.return_value = _mock_response(json_data={
@@ -170,7 +170,7 @@ class TestLookupEgress(unittest.TestCase):
 
     def test_empty_ip_input_returns_empty_without_http(self):
         """空 IP 不发请求，直接兜底返回。"""
-        with patch("core.geoip.requests.get") as mock_get:
+        with patch("toolbox.geoip.requests.get") as mock_get:
             result = lookup_egress("")
             mock_get.assert_not_called()
         self.assertEqual(result["country_code"], "")

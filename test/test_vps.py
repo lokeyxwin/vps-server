@@ -6,7 +6,7 @@ from unittest.mock import patch, MagicMock
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import paramiko
-from core import (
+from ssh.ops import (
     connect_server,
     close_server,
     execute_command,
@@ -26,7 +26,7 @@ from core import (
 
 
 class TestConnectServerMocked(unittest.TestCase):
-    @patch("core.ssh.paramiko.SSHClient")
+    @patch("ssh.ops.paramiko.SSHClient")
     def test_connect_success_returns_client(self, mock_ssh_client):
         mock_instance = MagicMock()
         mock_ssh_client.return_value = mock_instance
@@ -45,7 +45,7 @@ class TestConnectServerMocked(unittest.TestCase):
         )
         mock_instance.close.assert_not_called()
 
-    @patch("core.ssh.paramiko.SSHClient")
+    @patch("ssh.ops.paramiko.SSHClient")
     def test_connect_failure_raises_and_closes(self, mock_ssh_client):
         mock_instance = MagicMock()
         mock_instance.connect.side_effect = Exception("auth failed")
@@ -61,7 +61,7 @@ class TestConnectServerMocked(unittest.TestCase):
 class TestConnectErrorClassification(unittest.TestCase):
     """三种连接错误分别被精确捕获，并且都还能被 ConnectionError 兜底。"""
 
-    @patch("core.ssh.paramiko.SSHClient")
+    @patch("ssh.ops.paramiko.SSHClient")
     def test_auth_failure_raises_auth_failed_error(self, mock_ssh_client):
         import paramiko as _p
         mock_instance = MagicMock()
@@ -76,7 +76,7 @@ class TestConnectErrorClassification(unittest.TestCase):
         self.assertIsInstance(ctx.exception, ConnectionError)
         mock_instance.close.assert_called_once()
 
-    @patch("core.ssh.paramiko.SSHClient")
+    @patch("ssh.ops.paramiko.SSHClient")
     def test_timeout_raises_connect_timeout_error(self, mock_ssh_client):
         import socket
         mock_instance = MagicMock()
@@ -89,7 +89,7 @@ class TestConnectErrorClassification(unittest.TestCase):
         self.assertEqual(str(ctx.exception), CONNECT_TIMEOUT_MESSAGE)
         self.assertIsInstance(ctx.exception, ConnectionError)
 
-    @patch("core.ssh.paramiko.SSHClient")
+    @patch("ssh.ops.paramiko.SSHClient")
     def test_refused_raises_connect_refused_error(self, mock_ssh_client):
         mock_instance = MagicMock()
         mock_instance.connect.side_effect = ConnectionRefusedError(61, "refused")
@@ -101,7 +101,7 @@ class TestConnectErrorClassification(unittest.TestCase):
         self.assertEqual(str(ctx.exception), CONNECT_REFUSED_MESSAGE)
         self.assertIsInstance(ctx.exception, ConnectionError)
 
-    @patch("core.ssh.paramiko.SSHClient")
+    @patch("ssh.ops.paramiko.SSHClient")
     def test_unknown_error_falls_back_to_connection_error(self, mock_ssh_client):
         mock_instance = MagicMock()
         mock_instance.connect.side_effect = RuntimeError("something weird")
@@ -114,7 +114,7 @@ class TestConnectErrorClassification(unittest.TestCase):
         self.assertEqual(type(ctx.exception), ConnectionError)
         self.assertEqual(str(ctx.exception), CONNECTION_ERROR_MESSAGE)
 
-    @patch("core.ssh.paramiko.SSHClient")
+    @patch("ssh.ops.paramiko.SSHClient")
     def test_business_can_catch_specific_type(self, mock_ssh_client):
         """演示业务层可以区分错误类型给出针对性提示。"""
         import paramiko as _p
@@ -135,8 +135,8 @@ class TestConnectErrorClassification(unittest.TestCase):
 
     # ---------- 老服务器兼容：SSHException 退避重试 ----------
 
-    @patch("core.ssh.time.sleep")
-    @patch("core.ssh.paramiko.SSHClient")
+    @patch("ssh.ops.time.sleep")
+    @patch("ssh.ops.paramiko.SSHClient")
     def test_ssh_exception_recovers_on_retry(self, mock_ssh_client, mock_sleep):
         """首次 SSHException（如 "No existing session"）→ 重试第二次成功。"""
         import paramiko as _p
@@ -154,8 +154,8 @@ class TestConnectErrorClassification(unittest.TestCase):
         # 第一次失败 → sleep 一次（间隔 2.0s）
         mock_sleep.assert_called_once_with(2.0)
 
-    @patch("core.ssh.time.sleep")
-    @patch("core.ssh.paramiko.SSHClient")
+    @patch("ssh.ops.time.sleep")
+    @patch("ssh.ops.paramiko.SSHClient")
     def test_ssh_exception_all_attempts_fail_raises_connection_error(
         self, mock_ssh_client, mock_sleep,
     ):
@@ -174,8 +174,8 @@ class TestConnectErrorClassification(unittest.TestCase):
         # 失败后 sleep 调 2 次（第 3 次失败不 sleep 直接抛）
         self.assertEqual(mock_sleep.call_count, 2)
 
-    @patch("core.ssh.time.sleep")
-    @patch("core.ssh.paramiko.SSHClient")
+    @patch("ssh.ops.time.sleep")
+    @patch("ssh.ops.paramiko.SSHClient")
     def test_auth_failure_does_not_retry(self, mock_ssh_client, mock_sleep):
         """AuthenticationException 不重试——账密错重试无意义。"""
         import paramiko as _p
@@ -247,7 +247,7 @@ class TestExecuteCommandMocked(unittest.TestCase):
         stderr.read.return_value = b""
         return (MagicMock(), stdout, stderr)
 
-    @patch("core.ssh.time.sleep")  # 跳过实际 sleep 让测试秒过
+    @patch("ssh.ops.time.sleep")  # 跳过实际 sleep 让测试秒过
     def test_retry_recovers_after_ssh_exception(self, mock_sleep):
         """首次 SSHException → 退避重试 → 第二次成功（老服务器典型行为）。"""
         import paramiko
@@ -262,7 +262,7 @@ class TestExecuteCommandMocked(unittest.TestCase):
         self.assertEqual(client.exec_command.call_count, 2)
         mock_sleep.assert_called_once_with(0.25)  # 第 1 次失败 → 250ms 退避
 
-    @patch("core.ssh.time.sleep")
+    @patch("ssh.ops.time.sleep")
     def test_retry_3_times_all_fail(self, mock_sleep):
         """3 次都 SSHException → 抛 RuntimeError，sleep 调 2 次（1/2 之后才 retry）。"""
         import paramiko
@@ -274,7 +274,7 @@ class TestExecuteCommandMocked(unittest.TestCase):
         # 第 1 次失败 → sleep(0.25)；第 2 次失败 → sleep(1.0)；第 3 次失败直接抛
         self.assertEqual(mock_sleep.call_count, 2)
 
-    @patch("core.ssh.time.sleep")
+    @patch("ssh.ops.time.sleep")
     def test_retry_handles_oserror(self, mock_sleep):
         """OSError（含 ConnectionResetError / BrokenPipeError）也走重试。"""
         client = MagicMock()
@@ -286,7 +286,7 @@ class TestExecuteCommandMocked(unittest.TestCase):
         self.assertEqual(result["stdout"], "recovered\n")
         self.assertEqual(client.exec_command.call_count, 2)
 
-    @patch("core.ssh.time.sleep")
+    @patch("ssh.ops.time.sleep")
     def test_retry_handles_socket_timeout(self, mock_sleep):
         """socket.timeout 也走重试。"""
         import socket
@@ -298,7 +298,7 @@ class TestExecuteCommandMocked(unittest.TestCase):
         result = execute_command(client, "ls")
         self.assertEqual(result["stdout"], "ok\n")
 
-    @patch("core.ssh.time.sleep")
+    @patch("ssh.ops.time.sleep")
     def test_non_retriable_exception_short_circuits(self, mock_sleep):
         """ValueError 这种非通信类异常不该重试，立刻抛 RuntimeError。"""
         client = MagicMock()

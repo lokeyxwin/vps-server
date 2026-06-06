@@ -8,16 +8,14 @@ from datetime import datetime
 import config
 from db import ProxyRecord, VPSRecord, XrayStatus, session_scope
 from log import get_logger
-from core import (
+from ssh.ops import (
     AuthFailedError,
     ConnectTimeoutError,
     ConnectRefusedError,
-    VPSSession,
-    open_tcp_port_range,
-    FirewallOpenError,
-    test_socks_proxy,
-    EXTERNAL_UNREACHABLE_MESSAGE,
 )
+from ssh.session import VPSSession
+from toolbox.firewall import open_tcp_port_range, FirewallOpenError
+from toolbox.proxy_check import test_socks_proxy, EXTERNAL_UNREACHABLE_MESSAGE
 from xray import (
     XrayManager,
     XrayError,
@@ -277,7 +275,7 @@ def _upsert_proxy_bindings(ip: str, bindings: list[dict]) -> int:
     if not bindings:
         return 0
 
-    from core.security import encrypt_password
+    from toolbox.security import encrypt_password
 
     with session_scope() as session:
         vps_id = session.query(VPSRecord.id).filter_by(ip=ip).scalar()

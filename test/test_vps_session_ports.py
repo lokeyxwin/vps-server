@@ -1,6 +1,6 @@
 """VPSSession 端口探测方法的单元测试。
 
-测策略：mock 底层 core.ports 函数，验证 VPSSession 方法只是薄包装且
+测策略：mock 底层 toolbox.ports 函数，验证 VPSSession 方法只是薄包装且
 正确传递了 self._client。
 """
 
@@ -11,7 +11,7 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from core.session import VPSSession
+from ssh.session import VPSSession
 
 
 def _make_connected_session() -> VPSSession:
@@ -24,7 +24,7 @@ def _make_connected_session() -> VPSSession:
 class TestSessionPortMethods(unittest.TestCase):
     # ---------- is_port_free ----------
 
-    @patch("core.session.is_port_free")
+    @patch("ssh.session.is_port_free")
     def test_is_port_free_delegates_with_client(self, mock_fn):
         mock_fn.return_value = True
         s = _make_connected_session()
@@ -39,7 +39,7 @@ class TestSessionPortMethods(unittest.TestCase):
 
     # ---------- get_used_ports ----------
 
-    @patch("core.session.get_used_ports")
+    @patch("ssh.session.get_used_ports")
     def test_get_used_ports_delegates_with_client(self, mock_fn):
         mock_fn.return_value = {18443, 18445}
         s = _make_connected_session()
@@ -54,8 +54,8 @@ class TestSessionPortMethods(unittest.TestCase):
 
     # ---------- get_available_ports ----------
 
-    @patch("core.session.compute_available_ports")
-    @patch("core.session.get_used_ports")
+    @patch("ssh.session.compute_available_ports")
+    @patch("ssh.session.get_used_ports")
     def test_get_available_combines_used_and_compute(self, mock_used, mock_compute):
         """get_available_ports = get_used_ports + compute_available_ports 的编排。"""
         mock_used.return_value = {18445}
@@ -69,8 +69,8 @@ class TestSessionPortMethods(unittest.TestCase):
         mock_compute.assert_called_once_with({18445}, 18441, 18445, None)
         self.assertEqual(result, {18441, 18442, 18443, 18444})
 
-    @patch("core.session.compute_available_ports")
-    @patch("core.session.get_used_ports")
+    @patch("ssh.session.compute_available_ports")
+    @patch("ssh.session.get_used_ports")
     def test_get_available_passes_custom_exclude(self, mock_used, mock_compute):
         """传入自定义 exclude 时应原样透传到 compute_available_ports。"""
         mock_used.return_value = set()

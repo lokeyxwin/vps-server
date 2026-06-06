@@ -96,6 +96,9 @@ XRAY_INSTALL_TIMEOUT = 120
 # Proxy 业务端口范围
 # ============================================================
 
+# DEPRECATED: 旧"18441-18450 业务段"规则已被 ADR-0002 取消。
+# 新代码用 EXCLUDED_PORTS + 高位随机 + 纳管端口原样接管。
+# 下面 4 个常量仅供旧 services/* 引用，新 workers/* 不要用。
 # Proxy 业务部署的代理出口端口范围（每台 VPS 最多 10 个出口）
 PROXY_PORT_RANGE_START = 18441
 PROXY_PORT_RANGE_END = 18450

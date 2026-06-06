@@ -30,16 +30,14 @@
 工人**主动**做事：扫 task 表、抢锁、写数据库、决定下一步派什么任务。
 工具箱**被动**被调：不写表、不抢锁、不决定流程。
 
-工人去 `kits/install_xray/` 拿对应的格子用：
+工人去 `xray/manager.py::XrayManager` 拿对应方法用：
 
-| 工人 | 用哪些格子 |
-|------|----------|
-| SSHWorker | `probe`（仅 version） |
-| XrayWorker | `service` + `probe` |
-| IPProbeWorker | `config` + `probe` |
-| ProxyDeployWorker | `config` + `probe` |
-
-注：`probe` 模块的命名待统一，见 `issue/2026-06-06-probe-and-test-naming.md`。
+| 工人 | 用 XrayManager 哪些方法 |
+|------|----------------------|
+| SSHWorker | `version()` 一次连接顺手采集 |
+| XrayWorker | `install / start / enable / write_default_config / extract_existing_outbounds / ...` |
+| IPProbeWorker | 不直接用 xray（临时测试 VPS 自己装） |
+| ProxyDeployWorker | `add_inbound / remove_inbound / reload / ...` |
 
 ## 数据来源
 
@@ -52,5 +50,5 @@
 ## 注意
 
 - 工人之间**只通过 task 表接力**，不直接调用别人
-- 工人**只调 `kits/` + `core/` + `db/`**，不调 `services/`（旧代码）
+- 工人**只 import `xray/manager.py` + `core/` + `db/`**，不 import 旧 `services/`，也不 import `xray/service.py`、`xray/config.py`（那两个是片段参照，新代码完工后整体删除）
 - 工人之间共享资源（VPS）的协调，靠 task 表的 `vps_id` + `locked_until` 字段

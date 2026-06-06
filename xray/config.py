@@ -34,7 +34,7 @@ import string
 import paramiko
 
 import config
-from core.ssh import execute_command
+from ssh.ops import execute_command
 
 
 # ============================================================

@@ -397,7 +397,7 @@ class TestSSHConnectionErrors(_RegisterIPBase):
     @patch("services.ip_register.VPSSession")
     @patch("services.ip_register.lookup_egress")
     def test_auth_failed(self, mock_geo, mock_vps_cls):
-        from core import AuthFailedError
+        from ssh.ops import AuthFailedError
         mock_geo.return_value = {"country_code": "US", "country_name": "", "city": "", "region_name": "", "raw": None}
         mock_vps_cls.from_record.side_effect = AuthFailedError("auth")
         result = register_ip(**_common_kwargs())
@@ -406,7 +406,7 @@ class TestSSHConnectionErrors(_RegisterIPBase):
     @patch("services.ip_register.VPSSession")
     @patch("services.ip_register.lookup_egress")
     def test_timeout(self, mock_geo, mock_vps_cls):
-        from core import ConnectTimeoutError
+        from ssh.ops import ConnectTimeoutError
         mock_geo.return_value = {"country_code": "US", "country_name": "", "city": "", "region_name": "", "raw": None}
         mock_vps_cls.from_record.side_effect = ConnectTimeoutError("timeout")
         result = register_ip(**_common_kwargs())
@@ -415,7 +415,7 @@ class TestSSHConnectionErrors(_RegisterIPBase):
     @patch("services.ip_register.VPSSession")
     @patch("services.ip_register.lookup_egress")
     def test_refused(self, mock_geo, mock_vps_cls):
-        from core import ConnectRefusedError
+        from ssh.ops import ConnectRefusedError
         mock_geo.return_value = {"country_code": "US", "country_name": "", "city": "", "region_name": "", "raw": None}
         mock_vps_cls.from_record.side_effect = ConnectRefusedError("refused")
         result = register_ip(**_common_kwargs())

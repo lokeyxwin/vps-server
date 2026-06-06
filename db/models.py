@@ -83,7 +83,7 @@ class VPSRecord(Base):
 
     def get_password(self) -> str:
         """获取明文密码。仅在需要建立 SSH 连接时调用。"""
-        from core.security import decrypt_password
+        from toolbox.security import decrypt_password
         return decrypt_password(self.password_encrypted)
 
     @classmethod
@@ -99,7 +99,7 @@ class VPSRecord(Base):
         provider_domain: str = "",
     ) -> "VPSRecord":
         """从表单/入参构造 VPS 记录，密码在这里完成加密。"""
-        from core.security import encrypt_password
+        from toolbox.security import encrypt_password
         return cls(
             ip=ip,
             port=port,
@@ -201,7 +201,7 @@ class ProxyRecord(Base):
 
     def get_inbound_pwd(self) -> str:
         """获取客户端 inbound 的明文密码。仅在拼 xray inbound 配置时调用。"""
-        from core.security import decrypt_password
+        from toolbox.security import decrypt_password
         return decrypt_password(self.inbound_pwd_encrypted)
 
     @classmethod
@@ -215,7 +215,7 @@ class ProxyRecord(Base):
         ip_id 留 None：从 xray config 反推的 binding 没法直接对应 ip_record；
         后续巡检模块会按 egress_ip 字符串回填。
         """
-        from core.security import encrypt_password
+        from toolbox.security import encrypt_password
         return cls(
             vps_id=vps_id,
             vps_port=binding["port"],
@@ -249,7 +249,7 @@ class ProxyRecord(Base):
         - 入参显式而非 dict（业务清楚自己手里有啥）
         - inbound_pwd 在这里加密
         """
-        from core.security import encrypt_password
+        from toolbox.security import encrypt_password
         return cls(
             vps_id=vps_id,
             vps_port=vps_port,
@@ -290,7 +290,7 @@ class IPRecord(Base):
     （云服务商常给一个域名入口、分多条出口 IP），所以 entry_host 不做 unique。
 
     地区字段 (country_code / country_name / city / region_name) 来自 geoip 权威
-    （core.geoip.lookup_egress 返回值，由业务层 rgIP 流程内 ping 通过后落库）。
+    （toolbox.geoip.lookup_egress 返回值，由业务层 rgIP 流程内 ping 通过后落库）。
     用户填的 user_label 是自由备注，不参与查询匹配。
 
     密码字段 password_encrypted 同 VPSRecord 约定：直接拿到的是密文 bytes，
@@ -342,7 +342,7 @@ class IPRecord(Base):
 
     def get_password(self) -> str:
         """获取上游代理明文密码。仅在拼 xray outbound 配置时调用。"""
-        from core.security import decrypt_password
+        from toolbox.security import decrypt_password
         return decrypt_password(self.password_encrypted)
 
     @classmethod
@@ -363,10 +363,10 @@ class IPRecord(Base):
         """从表单/入参构造 IP 记录。
 
         password 在这里完成加密。
-        geo 是 core.geoip.lookup_egress 的返回 dict（成功时含 country_code/
+        geo 是 toolbox.geoip.lookup_egress 的返回 dict（成功时含 country_code/
         country_name/city/region_name；失败兜底 None → 全落空串）。
         """
-        from core.security import encrypt_password
+        from toolbox.security import encrypt_password
         geo = geo or {}
         return cls(
             entry_host=entry_host,
