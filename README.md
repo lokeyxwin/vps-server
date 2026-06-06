@@ -5,7 +5,7 @@
 核心解决一个真实痛点：
 你手上有一堆 VPS 服务器，想把它们**统一纳管 + 自动跑起 xray**，再用代理服务商给的 IP 通过这些 VPS **做成可用的代理出口池**——但全程不想手动 SSH 登录每台机器一条命令一条命令敲。
 
-> 现阶段：**VPS 这一边的能力已经完整闭环**。IP / Proxy 两个领域留了占位，规划写在 `TODO_IP_PROXY.md`。
+> 现阶段：**VPS 这一边的能力已经完整闭环**。IP / Proxy 两个领域留了占位，规划写在 `todo/TODO_IP_PROXY.md`。
 
 ---
 
@@ -95,7 +95,7 @@ HH:MM:SS ▶ services.vps_register: register_vps 全流程成功 xray=imported
 
 ## 未来规划：IP / Proxy
 
-**只剩两个领域要做**（详细设计见 `TODO_IP_PROXY.md`）：
+**只剩两个领域要做**（详细设计见 `todo/TODO_IP_PROXY.md`）：
 
 - **IP 业务**：注册代理服务商给的 IP → 借一台已装 xray 的 VPS 当测试机做联通验证 → 通过就入 IP 表
 - **Proxy 业务**：自动从 IP 表 + VPS 表凑料 → 在某台 VPS 的 18441-18450 某个端口配 xray 出口 → 内外联通测试 → 入 Proxy 表，形成可用的代理出口池

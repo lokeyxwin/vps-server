@@ -14,12 +14,12 @@
 - 工具名（Tool.name）= 模块文件名，便于排查。
 """
 
-from tools.list_available_proxies import TOOL as _list_available_proxies_tool
-from tools.list_available_proxies import handler as _list_available_proxies_handler
+from tools.get_available_proxy_nodes import TOOL as _get_available_proxy_nodes_tool
+from tools.get_available_proxy_nodes import handler as _get_available_proxy_nodes_handler
 
 
 ALL_TOOLS = [
-    (_list_available_proxies_tool, _list_available_proxies_handler),
+    (_get_available_proxy_nodes_tool, _get_available_proxy_nodes_handler),
 ]
 
 __all__ = ["ALL_TOOLS"]

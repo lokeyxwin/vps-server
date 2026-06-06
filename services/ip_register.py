@@ -2,7 +2,7 @@
 
 业务身份：egress_ip。一条 rgIP = 同时写 IPRecord + ProxyRecord 两张表。
 
-主流程见 TODO_IP_PROXY.md §2。按 CLAUDE.md 业务函数契约：
+主流程见 todo/TODO_IP_PROXY.md §2。按 CLAUDE.md 业务函数契约：
 - 返回 dict 含 status，吃掉所有底层异常
 - 业务事件用 logger.info 口语化叙述（services.ip_register logger）
 - 失败时回滚 xray config（rollback_proxy_binding），不让脏配置遗留

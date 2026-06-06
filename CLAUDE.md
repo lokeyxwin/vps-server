@@ -1,274 +1,564 @@
-# CLAUDE.md
+# CLAUDE.md —— 全局通用协作守则
 
-VPS 资产管理 + 代理出口自动化项目（个人/小团队规模）的 AI 协作契约。
-**所有新代码必须遵守这些规则**——它们是 VPS 模块完整闭环后沉淀的真实经验。
+**版本**:v2(2026-06-06)
 
-VPS 模块已闭环。**IP 业务是接下来的工作**（流程 + 实现见 [TODO_IP_PROXY.md](TODO_IP_PROXY.md)）。
+> **本文件 vs CLAUDE.local.md 的边界**
+>
+> - `CLAUDE.md`(本文件) —— **全局通用规则**:项目目录骨架、协作节奏、决策判定、用户确认规则、Python 风格指引。
+>   换一个项目(爬虫 / IM 后端 / 任何新项目)这些规则仍然适用。
+> - `CLAUDE.local.md` —— **本项目特有规则**:业务和技术栈强相关的约束。换项目就废了。
+>
+> **新规则进哪份的自检口诀**:
+> > 这条规则换到另一个完全不同的项目还能用 → CLAUDE.md
+> > 换项目就废了 → CLAUDE.local.md
+> > 这是"我们当时为什么这么定" → docs/adr/NNNN-xxx.md
+> > 这是"现在要去做" → task/<state>_NN_xxx.md
+> > 还没拍板的事 → issue/YYYY-MM-DD-主题.md
 
 ---
 
-## 核心约束（按重要性排序）
+## 1. 项目目录骨架
 
-### 1. YAGNI——绝对不允许过度设计
-
-- **Rule of Three**：重复 3 次才考虑抽象
-- **抽象基类是"发现的"不是"设计的"**——2+ 实现共享契约才抽 ABC
-- **不要为对称建空包/空文件**：单文件就单文件
-- **不预留配置项**：硬编码到真有需要再挪 config
-
-### 2. 三层架构（严格自下而上）
+任何项目都应该有这套骨架:
 
 ```
-入口（CLI / 未来 MCP / Web）
-   ↓
-业务层 services/         ← 编排 + 决策 + DB 状态机 + 错误兜底
-   ↓
-工具编排层 Manager 类     ← 把多步 atom 串成"一行就能调"的复合操作
-   (XrayManager / VPSSession 既是 SSH 包装，更是工具编排层)
-   ↓
-原子层 atom 函数         ← 单一动作、纯函数、无状态、错误抛领域异常
-   (xray.service / xray.config / core.ports / core.ssh / ...)
-   ↓
-基础设施（DB / 加密 / 日志 / 第三方库）
+issue/                  ← 还没拍板的事 / 临时痛点 / 待讨论
+                         文件名:YYYY-MM-DD-主题.md
+
+task/                   ← 拍板后要做的具体活
+                         文件名:<state>_NN_主题.md
+                         state: waiting / doing / done
+                         一文件一任务,完成只改文件名前缀,不改内容
+
+docs/adr/               ← 架构决策永久档案(Architecture Decision Record)
+                         文件名:NNNN-决策名.md (4 位数字编号)
+                         写完不改,要改写新 ADR 标 deprecate 旧的
+
+tests_behavior/         ← 行为测试(产品视角验收标准的金标准住所)
+   └── <module>/
+        ├── spec.md     ⭐ 用户口述的验收标准(唯一金标准,只改这里)
+        └── TC-NN_*.py  ← 测试代码,顶部引用 spec.md 不复制内容
+
+CLAUDE.md               ← 全局通用规则(本文件)
+CLAUDE.local.md         ← 本项目特有规则
 ```
 
-**禁止**：
-- 跨层跳跃（业务直接调 atom 绕过 Manager 允许；atom 跨领域 import 不行）
-- atom 之间跨领域 import（**唯一例外**：领域 atom → `core.*`，core 是基础设施）
-- 类层调业务层（反向依赖）
+**目录职责一句话定义**:
+- issue → 还没拍板
+- task → 拍板了且 5 条前置满足
+- docs/adr → 为什么这么定(永久档案)
+- tests_behavior/<module>/spec.md → 应该达到什么效果(金标准)
+- CLAUDE.md / CLAUDE.local.md → 怎么干活(协作守则)
 
-### 3. 业务函数返回 dict，不抛异常给上层
+---
+
+## 2. 项目拆解方法论
+
+### 2.1 讨论方向 ≠ 拆任务方向 ⭐⭐⭐
+
+```
+讨论业务时(从顶层往下):
+    业务流程 → 工人 → 工具编排 → 工具 → 原子
+       目的:保证业务故事完整,不漏场景
+
+拆任务单时(从底层往上):
+    原子 → 工具 → 工具编排 → 工人 → 业务
+       目的:避免"造业务时发现工具不够回头补",越写越乱
+```
+
+**口诀**:**讨论自顶向下,落地自底向上**。
+
+### 2.2 设计方向 vs 学习方向(双向思维)
+
+```
+帮用户思考时 → 跟着用户的认知方向(自下而上):
+    原子操作 → 工具 → 工具编排 → 业务流程 → 工人 → 服务化
+    先确认手头工具,再帮拼工人,再悟服务化
+
+帮用户检查时 → 反向用自上而下:
+    业务流程 → 工人 → 工具 → 原子
+    检查清单:每层是否完整?是否漏了什么?
+```
+
+### 2.3 后端项目拆解的正确顺序
+
+```
+做 MCP / 任何后端项目的正确顺序:
+  ① 先定业务流程(业务层 = 工人模型,跑得通)
+  ② 再包服务(service / API / 模块边界)
+  ③ 最后才包对外入口(MCP 工具 / HTTP / CLI,薄薄一层壳)
+
+反模式:
+  ✗ 一上来就说"我要个 MCP 工具叫 XX",然后直接进黑盒
+  ✗ 跳过业务流程,直接讨论协议层
+
+讨论节奏:
+  用户给一个想法 →
+  Claude 先问"这个想法拆成几个工人?"(不是"你要什么工具?")
+   → 每个工人有什么能力?
+   → 工人之间怎么交接?(定时/轮询/通知/任务表调度?)
+   → 状态机长什么样?
+   → 然后才是接口、入库、对外工具入口
+```
+
+### 2.4 ⭐ 脚本 → 后端服务的认知拐点(7 问引导清单)
+
+当用户说出**任何**"我要包成 MCP / 后端服务 / 常驻进程"时,
+Claude **必须**主动按用户当前心智层一条条问(**不一次性砸 7 条**)。
+
+```
+心智层 1: 我有几个函数想包成服务
+  触发问 1: "这些函数跑完即结束?还是要常驻一直转?"
+  用户答"要常驻" → 进入下一层
+            ↓
+心智层 2: 我懂常驻了,要拆工人
+  触发问 4: "agent 能调到所有内部步骤?还是只能调主入口?"
+  触发问 7: "不同业务线会抢同一份资源吗?"
+            ↓
+心智层 3: 工人拆好了,要定状态机
+  触发问 2: "agent 调一次等结果?还是拿任务编号回去自己查?"
+  触发问 3: "失败了直接抛?还是入库标 pending_retry?"
+            ↓
+心智层 4: 状态机定了,要持久化
+  触发问 5: "agent 怎么知道任务跑到哪一步?"
+  触发问 6: "进程被杀重启,任务能续吗?"
+```
+
+**Claude 自检规则**:永远只问"用户当前心智层的下一个问题",不超前。
+
+**7 问全集(参考)**:
+
+1. 跑完即结束 vs 常驻
+2. 同步阻塞 vs 异步状态机
+3. 单次 vs 重试/熔断
+4. 内部细节 vs 接口抽象(agent 看得到内部步骤吗?)
+5. 状态可见性(agent 怎么知道现在到哪一步?)
+6. 状态持久化(进程重启能续吗?)
+7. 资源共享与争抢(谁当裁判?用什么锁?)
+
+任一问题答不上来 → 用户还在脚本心态 → 不能直接开始写对外工具入口。
+
+### 2.5 Claude 必须主动反推工具清单
+
+```
+每次 spec.md 行为故事写完, Claude 必须主动反推:
+  "工人要干这 6 步,每步需要什么工具?"
+       ↓
+列工具清单, 分:
+  - 旧代码搬(指向旧路径,标"待改名"如有)
+  - 新造(标位置)
+  - 内部小工具(住在工人 .py 内部)
+       ↓
+用户审过工具清单, 才能开"造工具"的任务单
+
+用户不能等 Claude 在写实现时"哦缺工具回头造" —— 必须 spec 阶段就识别完。
+```
+
+### 2.6 用户口述天然含 4 种信息,Claude 要主动抽
+
+```
+用户口述里天然包含 4 类信息, Claude 必须主动识别+抽出:
+  ① 步骤顺序("先 X 再 Y")
+  ② 判断逻辑("如果 A 就 B,否则 C")
+  ③ 判断标准("通了就算可用,不通就算疑似过期")
+  ④ 分支("装了 / 没装 / 装了但停了 / 装了跑着且有别人配置")
+
+反禁项:
+  ✗ 不能要求用户"再用技术语言重说一遍"
+  ✗ 不能假装用户没说"我等你补充判断标准" —— 他口述里都有
+```
+
+### 2.7 什么算"工具", 什么不算
+
+| 应该抽成工具 | 不抽(直接 inline) |
+|------------|------------------|
+| ✅ 跨多个 worker / 多处复用 | ❌ 只在一处用 + 1-2 行 |
+| ✅ 涉及外部系统(SSH / HTTP / 改配置文件) | ❌ 简单 ORM 查询(SELECT/INSERT/UPDATE 直接走 SQLAlchemy) |
+| ✅ 内部有判断 / 分支 / 多步 | ❌ 字典 / 列表 / 字符串操作 |
+| ✅ 旧代码已有的(搬过来) | ❌ 一次性脚本逻辑 |
+
+**口诀**:**复用 + 外部 + 多步 = 抽工具;一次 + 内部 + 一步 = 别抽**。
+
+---
+
+## 3. 协作节奏
+
+### 3.1 散点口述 → 编号回应
+
+很多用户的表达模式:**散点口述,不按顺序,一段话里 A/B/C 三件事混着说**。
+痛点:自己说过的话过会儿就忘。
+
+Claude 必须:
+- 捕到的每一点用 ①②③ 或表格编号 → 用户能精确指"第 X 点改成 Y"
+- 区分**"已捕到 / 待你拍 / 我有补充"** 三类 → 用户知道注意力放哪
+- **骨架先于细节** → 表格/清单先列出来,细节后展开
+- **永远把决策权留给用户** → Claude 提选项,不替用户拍板
+
+### 3.2 注意力管理("我装不下"问题的解决)
+
+- **一次只推一个模块的细节**(不要平铺所有模块)
+- **决策点一次最多 3-5 个**(超过就拆批)
+- **每段末尾必须有"等你拍 / 我现在做"**
+- 长内容用**表格 + 编号**,杜绝大段文字
+- 把"还差什么"和"现在做了什么"**分开列**
+
+### 3.3 行为故事先于技术细节
+
+写给用户看的(spec / issue / task 的"目标"段)必须是**产品视角的人类故事**:
+- ✅ "我接到一个 IP,先去测试 VPS 验账密,通了入库,派下一活儿"
+- ❌ "register_ip() 调 SSH probe + xray.config.add_inbound,返回 task_id"
+
+技术细节(数据结构、字段名、API 签名)藏在"实现指引"段,产品视角看不到也不影响判断。
+
+### 3.4 技术 ↔ 大白话双语义务
+
+Claude 写文档/代码用技术语言(schema、字段、签名等),但跟用户对齐 /
+让用户拍板时**必须用大白话回译**:
+
+- 不用专业术语(除非现场解释)
+- 用"打个比方 / 类比"打通直觉
+- 用 ✅/❌ 表格替代长描述
+- 用户从不需要看技术细节才能拍板
+
+**举例时直接用用户当前项目的业务场景**,不要拿外部例子(用户已有对照主体,容易理解)。
+
+---
+
+## 4. 任务可落的 5 条前置
+
+**只有同时满足以下 5 条,Claude 才允许新建 `task/waiting_NN_xxx.md` 文件**:
+
+```
+① 用户脑子里过了一遍流程
+② 知道要改 / 新建哪些文件
+③ 知道这些文件里写什么(代码 / 工具 / 实现轮廓)
+④ 有测试用例(行为故事,产品视角看得懂的那种)
+⑤ 用户口头说"OK 落这条任务"
+```
+
+任一不满足:
+- 继续留在对话或 issue 里讨论
+- **不允许** Claude 提前开 task 文件
+- **不允许** Claude 说"我已经准备好了你看看吧"然后塞文件
+
+### 4.1 一次完整功能 commit(完工后的提交规则)
+
+实现者完工 + 验收通过后,**一个 commit 提交完整功能**——
+包含相关代码 + 任务单 + 测试用例 + spec/ADR 修订(如有)。
+
+```
+一次完整功能 commit 必含:
+  ① 实现的代码文件(workers/*.py / db/models.py / xray/*.py / ...)
+  ② 对应的测试文件(tests_behavior/<module>/TC-*.py)
+  ③ 任务单本身(task/waiting_NN_*.md → 同时改名 task/done_NN_*.md)
+  ④ 相关 spec.md 修订(如本次功能改了行为规约)
+  ⑤ 相关 ADR(如本次功能涉及新架构决策)
+
+不要分拆成多个 commit("先 commit 代码,再 commit 任务单"等)。
+
+git add 必须按文件路径**显式**列,不用 `git add -A` / `git add .`
+(避免扫到 CLAUDE.md / CLAUDE.local.md / issue/ 等"留本地"的文件)。
+
+commit 标题用约定式格式:
+  feat(<scope>): / fix: / refactor: / test: / docs: / chore:
+```
+
+**目的**:`git log` 看一个 commit 就有**完整上下文** —— 做什么(任务单)/
+怎么做(代码)/怎么验(测试)/为什么(ADR),不用再翻多个文件配对。
+
+**反模式**:
+- ✗ 代码先 commit、测试单独 commit(失去原子性)
+- ✗ 任务单做完才改 done_ 前缀,代码已经 commit 但任务单状态没改
+- ✗ `git add -A` 扫掉一堆不该进库的本地文件(CLAUDE.md / issue/ / 本地草稿)
+
+---
+
+## 5. 用户确认规则(不背后偷偷干)
+
+### 5.1 落文件前必须先列清单审
+
+Claude 在以下动作前必须先把内容/diff 列给用户看,**用户点头才落文件**:
+- 新建 `issue/*.md`
+- 新建 `task/*.md`
+- 新建 `docs/adr/*.md`
+- 修改 `CLAUDE.md` / `CLAUDE.local.md`
+- 修改任何已有的 spec.md
+
+**自动允许、不需要预先确认的只有**:
+- 读现有文件
+- 执行 ls / grep / git status / git log 等只读探查
+- 完成已落定的任务后改文件名前缀(task 状态机)
+- 跑测试
+
+**例外**:当用户已经明确口头授权"按 X→Y→Z 顺序一份一份落"或"开干"时,
+连续动作不需要每份再单独问 —— 只需每份完成后报告。
+
+### 5.2 ⭐ 输入归类与冲突防御(6 步)
+
+用户每说一段话(无论用户有没有标"接着 XXX"):
+
+```
+① 识别这段话归属哪个 spec/模块/工人
+② 不确定 → 必须停下来反问"这听起来是 X 模块?"
+③ 确定 → 锁定 tests_behavior/<module>/spec.md
+④ 判断这段话是:
+     新增 → 追加到 spec.md 某节末尾
+     修改 → 替换原某条,标"vN+1 替换 vN 第 X 条"
+     删除 → 划掉但保留原话作历史
+⑤ 把"我准备改 spec.md 第 X 节,这样改:<diff>" 列给用户审
+⑥ 用户点头才落
+```
+
+**冲突防御**:spec.md 内部**绝对禁止**:
+- 同一行为有"标准 A 和标准 B"两份并列
+- 两份相互冲突的描述放在同一份 spec 里
+
+写入前 Claude 必须做冲突检测:
+- 新内容是否跟现有任何一条互斥?
+- 互斥 → 暂停 → 反问"v2 第 X 条说 Y,您现在说 Z,要替换 Y 吗?还是 Z 是另一种场景?"
+- 不互斥但相关 → 标"补充第 X 条"
+
+**上下文锚点**:连续口述时 Claude 维持锚点:
+> "上一段我们在聊 X 模块的入库规则;这一段听起来还是 X 模块,但说的是版本检查;
+>  我把它追加到 X spec.md 第 Y 节后面?"
+
+禁止:
+- ✗ 默认用户切换了模块就建新文件
+- ✗ 默认用户在补充就直接追加(必须先反问)
+
+### 5.3 验收标准金标准住在 spec.md(single source of truth)
+
+每个模块的验收标准住在 `tests_behavior/<module>/spec.md`, **只此一处**。
+下游 task / TC 文件**只引用,不复制**。
+
+`spec.md` 内部三段式:
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ # <module> 行为规约                                       │
+│ 版本: vN (更新于 YYYY-MM-DD)                              │
+│                                                          │
+│ ## 一、整理后的要点(Claude 整理,用户审过)                 │
+│   - 入口 / 必做 / 失败规则 / 内嵌约束 ...                 │
+│                                                          │
+│ ## 二、用户口述原话(金标准,审查时翻这里)                  │
+│   > "用户原话整段保留,Claude 不剪裁"                      │
+│                                                          │
+│ ## 三、修订历史                                           │
+│   - v1 YYYY-MM-DD 初版                                   │
+│   - v2 YYYY-MM-DD 失败入库规则修订                       │
+└──────────────────────────────────────────────────────────┘
+```
+
+修改流程:
+- 改 spec.md → 自动列"下游影响清单"(哪些 TC 待重跑、哪些 task 引用了)
+- 下游 task 和 TC 文件**永远不持有验收标准本身**,只引用 spec.md
+- 所以 spec 改了,下游不需要内容同步,只需要"重新验证"
+
+### 5.4 占位文件同步(工具位置约定下沉到文件系统)
+
+讨论"工具 X 住路径 Y"对齐成功后,Claude 必须立刻:
+- 如果 Y 已存在 → 不动,直接指向
+- 如果 Y 不存在 → 建空 .py 文件 + 顶部 docstring
+
+占位文件顶部 docstring **必须用大白话**包含:
+- ① 这文件装啥(一句话功能定义)
+- ② 工具清单大白话(列方法名 + 一句话)
+- ③ 谁拿来用
+- ④ "实现等任务单填,目前空占位"
+
+**目的**:
+- 用户能直接 ls 看到文件,加深位置印象
+- 任务单"目标文件"字段指向真实路径,无歧义
+- 实现者照路径填代码,不自创位置
+
+**什么时候建占位**:
+- ✓ 跟用户对齐了"需要这工具 + 住这路径"
+- ✗ 用户还没拍板"要这工具" → 不建
+
+### 5.5 spec.md 中 §工具清单 的格式
+
+spec.md 在"行为故事"和"用户原话"之间必须有 **§工具清单** 一节,**分 A/B 两层**:
+
+```
+A. 原子工具(造完摆在工具包/共用模块里)
+   按工具包分组列, 每个工具一行:
+     <大白话名字>      <一句话功能>
+   抠信息类工具加 ⭐ 标记 + "字段大类清单"
+
+B. 工具编排(几个原子打包成一行调)
+   默认住工人内部(私有 _函数), 多个工人复用才抽出来
+   每个编排列:
+     <大白话名字>
+       干啥: ...
+       步骤: ...
+```
+
+**用户审什么**:
+- A 部分:**功能 + 位置**(不审实现细节 / 函数签名)
+- B 部分:**名字 + 位置 + 给谁用 + 步骤顺序**
+
+**抠信息类工具的字段对齐协作流(3 层)**:
+- spec.md 阶段(用户 ↔ Claude):**聊字段大类**(账密/端口/出口IP/国家),不聊字段命名
+- spec.md 同时标"⭐ 抠信息类"
+- 任务单阶段(实现者 ↔ 用户另一窗口):实现者列**字段命名**细节,用户在那里抠
+
+**命名风格**:
+- 跟 Claude 对话 / spec.md: **全部大白话中文**
+- 任务单 / 代码 (给模型看): 英文术语 OK
+
+---
+
+## 6. 决策判定(决策树 + 自检口诀)
+
+每当出现一个新东西, 问自己:
+
+```
+Step 1: 这事拍板了吗?
+  ├─ 没拍板 / 临时痛点 / 待讨论 → issue/<日期>-主题.md
+  │
+  └─ 拍板了 → 它是什么?
+     │
+     ├─ "要做的活" + 满足任务可落 5 条前置 → task/waiting_NN_xxx.md
+     │
+     ├─ "为什么这么决定的档案"(架构决策) → docs/adr/NNNN-xxx.md
+     │
+     ├─ "应该达到什么效果"(验收标准)    → tests_behavior/<module>/spec.md
+     │
+     └─ "做事方式 / 命名 / 协作约定" → Step 2
+
+Step 2: 这条规则换项目还能用吗?
+  ├─ 能用(命名 / 工作流 / 拆解方法论 / 协作节奏) → CLAUDE.md
+  └─ 不能用(本项目业务 / 技术栈强相关)             → CLAUDE.local.md
+
+Step 3: 落文件前 Claude 必须先报告:
+  "我准备做 X,这会改 / 新建以下文件: <清单>"
+  用户点头才动手。
+```
+
+**四个文件的区别口诀**(很多人搞混):
+
+| 文件 | 答什么问题 | 寿命 |
+|------|-----------|------|
+| **ADR** | "我们当时为什么这么决定" | 永久,几乎不改 |
+| **CLAUDE.md** | "以后所有项目干活怎么做" | 长期,跨项目通用 |
+| **CLAUDE.local.md** | "本项目特有规则" | 长期,但项目级 |
+| **spec.md** | "这个模块应该达到什么效果" | 长期,可改但 single source of truth |
+| **issue** | "这事还没拍板" | 短,决策完归档 |
+| **task** | "这事拍板了去做" | 中,做完归档 |
+
+---
+
+## 7. Python 风格指引(通用)
+
+### 7.1 类 vs 纯函数的判定
+
+```
+有"状态"要绑住吗?(连接/资源/打开的文件)
+  ├─ 有 → 类(状态绑在 self 里)
+  │      例: SSHSession(连接) / XrayManager(client) / Worker
+  │
+  └─ 没有 → 纯函数
+         例: encrypt_password / lookup_geoip / hash_xxx
+```
+
+**反例**: 为对称强行包类:
 
 ```python
-def <动词>_<对象>(...) -> dict:
-    return {"status": "ok", ...}              # 成功
-    return {"status": "duplicate", "message": ...}  # 已知失败
+# ❌ 反例:无状态强行包类
+class GeoIPLookup:
+    def __init__(self): pass   # 空的!没状态绑
+    def lookup(self, ip): ...
+
+# ✅ 正例:无状态用函数
+def lookup_egress(ip): ...
 ```
 
-业务层吃掉所有底层异常，转成 status 字符串。CLI 只看 status 决定怎么做。
+**Python 哲学:能简单就别复杂**。
 
-### 4. 错误细分 + 附排查指令
+### 7.2 主推风格: 类的实例方法
 
-- 每种失败有自己的 status code（不要一个 `failed` 兜底）
-- 每个 message 列**常见原因 3 条** + **排查命令**
-- 已有模板：连接错误 4 类（auth/timeout/refused/failed）、xray 错误 7 类、config 错误 3 类
-
-### 5. 不要修复你没确认的问题
-
-发现"设计意图不完善"先汇报，等用户拍板。**禁止自作主张**加字段 / 抽基类 / 引依赖。
-
----
-
-## 业务函数契约
-
-```
-def <业务>(...) -> dict:
-    logger.info("开始XX...")                            # 口语化叙述
-    ① 查 DB：已存在 / 已完成 / 正在做 → 短路返回
-    ② 标记"正在做"入库（并发保护 + 留痕）
-    ③ 通过 Manager 调工具编排层
-       try: result = manager.高层方法()
-       except 领域异常子类: 转 status 返回 + 写失败 DB
-    ④ 验证（内部 + 外部）
-    ⑤ 写最终状态入库
-    ⑥ return {"status": ..., ...}
-```
-
-**失败也必须写 DB**——避免 message 说 "version=X" 但字段空的矛盾。
-失败时主动再问 manager 收集上下文（参考 `services/vps_init._save_failure_with_context`）。
-
----
-
-## 命名约定
-
-| 类型 | 后缀/命名 | 例子 |
-|------|----------|------|
-| 资源管理类 | `Manager` | `XrayManager` |
-| SSH 会话类 | `Session` | `VPSSession` |
-| ORM 模型 | `Record` | `VPSRecord` / `ProxyRecord` |
-| 状态常量类 | `XxxStatus` | `XrayStatus.RUNNING` / `ProxyStatus.USING` |
-| DB 表名 | 类名 snake_case | `vps_record` / `proxy_record` |
-| 业务函数 | `<动词>_<对象>` | `register_vps` / `init_vps_xray` |
-| CLI 子命令 | 短缩写 | `rgvps` / `rgip` / `xrayinit` |
-| 通用软件管理方法 | install / start / stop / enable / disable / is_running / is_enabled / version / reload | 跨软件（xray / caddy / ...）通用 |
-
----
-
-## 模块组织（重要）
-
-### 领域包内部拆 service.py + config.py
-
-xray 模块的经验——**任何"有运行时 + 有配置文件"的软件领域**都套用：
-
-```
-<domain>/
-├── service.py    ← 服务运行时操作（install/start/stop/enable/disable/is_*/version/test_*）
-├── config.py     ← 配置层（纯函数 build_* + SSH 操作 upload/validate/read/...）
-└── manager.py    ← Manager 类：薄包装 atom + 高层 ensure_* 编排
-```
-
-**触发拆分时机**：当一个 `atom.py` 同时承担"服务管理"+"配置管理"两类职责且 >200 行。
-
-### 共享常量放 core，不要在各领域里冗余维护
-
-如果两个领域都要用同一份常量/dict（例：默认 inbound 形状），抽到 `core.constants` 或 `config.py`。
-**血泪教训**：曾经 ip/atom 和 xray/atom 各维护一份 default config，迟早会漂移。
-
-### 包按业务流程命名，不按动作命名
-
-✅ `services/vps_init.py`（VPS 初始化业务）
-❌ `services/vps_install_xray.py`（"装 xray"是其中一个动作，不是业务全貌）
-
----
-
-## 数据模型契约
-
-### 生命周期 5 字段（任何"有状态的资源"都加）
+新代码遇到"有状态"(有 client / 有连接 / 有任务上下文)的对象, 主推**类的实例方法**:
 
 ```python
-xxx_status: str               # 当前状态枚举（XxxStatus 常量约束）
-xxx_version: str              # 版本/标识
-xxx_installed_at: datetime    # 首次完成时间 (nullable)
-xxx_last_checked_at: datetime # 最近一次检查时间
-xxx_status_message: str       # 人类可读的状态附加信息
+class XrayManager:
+    def __init__(self, client):      # 一次绑住状态
+        self.client = client
+
+    def install(self):                # 方法的 self 自动绑
+        self.client.exec_command("...")
 ```
 
-### 敏感字段加密
+工人也是类:
 
-- 字段命名 `xxx_encrypted: bytes`
-- 解密走 `record.get_xxx()` 方法
-- 加密在 ORM 的 `from_form() / from_xxx()` 工厂方法内发生
-- `__repr__` 主动屏蔽密码字段
-- 原生 SQL 读盘断言密文不含明文（专项测试）
-
-### 事实表模式（固定大小）
-
-某些表行数有自然上限（如 `proxy_record` 每台 VPS 最多 10 条对应 18441-18450 端口）：
-- **过期不删行**，改 `status='expired'` 等下一条 IP 顶替（原地 UPDATE）
-- 业务层 upsert：按唯一键查 → 存在则 UPDATE，不存在则 INSERT
-- 双 UniqueConstraint 防错绑
-
-### Reconcile 模式
-
-**服务器是真相，DB 是它的影子**。每次业务先看实际状态再决定动作（参考 `XrayManager.ensure_installed_and_running`）。
-
-### Dev DB 迁移
-
-dev SQLite 加字段：`ALTER TABLE ADD COLUMN ... DEFAULT 0`
-dev SQLite 加表：`Base.metadata.create_all(engine, tables=[X.__table__])`
-dev SQLite 改结构：让用户手动 `DROP TABLE` 再 create_all（钩子会拦自动 drop）
-
----
-
-## 日志契约（两层风格分工）
-
-业务层用 `services.<name>` logger，工具/原子层用模块名 logger。LayeredFormatter 自动区分：
-```
-HH:MM:SS ▶ services.xxx: ...     ← 业务事件
-HH:MM:SS [INFO] core.ssh: ...    ← 原子事件
+```python
+class SSHWorker:
+    def process(self, ip, user, pwd, port):
+        session = SSHSession(ip, user, pwd, port)  # 实例化连接
+        xray = XrayManager(session.client)         # 实例化工具,client 嵌入
+        version = xray.version()                   # 调方法
+        session.close()
 ```
 
-### 业务层（services/*）——口语化叙述，给人看
+**对象嵌套 = 乐高积木**: 上层对象拿下层对象的属性来组装自己。
 
-像跟人讲故事：
+### 7.3 不重复"先函数后封类"
+
+```python
+# ❌ 反例: 写两遍
+def install(client): ...                 # 函数一遍
+class XrayManager:
+    def install(self):
+        install(self.client)             # 方法又调一遍
+
+# ✅ 正例: 方法直接写实现
+class XrayManager:
+    def install(self):
+        self.client.exec_command("...")  # 一遍搞定
 ```
-"开始登记 VPS：ip=X 账号=Y 端口=Z"
-"数据库里还没这台，准备 SSH 上去看看情况"
-"端口审计：业务端口区间内可用 10/10 个，已被 xray 绑定 0 个"
-"xray 全部搞定：状态=imported 版本=Xray 26.3.27 本次做的操作=[]"
-"VPS 完整登记完成"
-```
 
-业务必须在**每个分支决策点 log**：开始 / 跳过 / 失败 / 成功。
+(注:**旧代码已有"先函数后封类"的留着不删**作对照,新代码直接在方法里写实现。)
 
-### 工具/原子层（core/*、xray/*）——结构化 `func: in → out`，给 AI/排障看
+### 7.4 占位用 `pass`, 不用 raise
 
-格式：`<函数名>: <输入 k=v 空格分隔> → <结果>`
-```
-connect_server: ip=X port=22 user=root → ok
-connect_server: ip=X user=root → auth_failed (...)
-open_tcp_port_range: start=18440 end=18450 → detected_fw=firewalld
-test_socks_proxy: target=X:Y url=... → ok=True http=200 egress=X
-XrayManager.version: → Xray 26.3.27 (already installed)
-XrayManager.is_running: → False → systemctl start xray
+```python
+# ✅ 推荐
+def install(self):
+    """等任务单填实现。"""
+    pass
+
+# 不推荐(虽然也对,但概念多用户难懂):
+def install(self):
+    raise NotImplementedError
 ```
 
 ---
 
-## 测试契约
-
-| 层 | 测什么 | 怎么做 |
-|----|-------|--------|
-| atom | 函数的所有分支 | mock 第三方调用（paramiko / requests），断言返回值 / 抛错 |
-| Manager | 类内部状态机 if/else | mock `xray.manager.service.*` / `xray.manager.xc.*`，测每个分支 |
-| 业务 | 所有 status 路径 | mock 整个 Manager + DB session，覆盖每种 status + 验证 DB 写入 |
-
-**安全场景必测**：
-- 密码落盘是密文（原生 SQL 验）
-- `__repr__` 不泄露明文
-- 错误密钥解密失败
-- 并发同资源不能重复（DB 状态字段验）
-
-**真服务器测试默认 skip**，配 `VPS_TEST_*` 环境变量触发。**不要让 CI 默认跑**。
-
----
-
-## 工作流
-
-### 开发顺序
-
-```
-新业务：
-  ① 原子函数 + 单测 → commit
-  ② Manager 复合方法 + 单测 → commit
-  ③ 业务函数 + 单测 → commit
-  ④ 真服务器跑一次验证 → 修问题 → 再 commit
-  ⑤ main.py 留到所有业务都做完，最后统一编排
-```
-
-### Commit 规则
-
-- **功能 + 测试 = 一个 commit**
-- 标题：`feat(<scope>):` / `fix:` / `refactor:` / `test:` / `docs:` / `chore:`
-- 摘要列关键改动点，不堆代码
-
-> ⚠️ **严禁 `git add -A` / `git add .` 图省事**——会一锅端未跟踪文件（main.py / .env / 临时脚本）。**必须按文件路径显式 `git add path/to/file ...`**。
-
-### main.py / mcp_server.py
-
-- main.py：等所有业务做完再统一编排路由。每加一个业务**先写业务，不要为单个业务改 main**
-- mcp_server.py：未来 MCP 入口，**当前不写**
-
-### 真服务器跑
-
-完成新业务后业务作者负责跑一次真服务器确认全流程通。挂在哪、DB 留了什么状态是验证核心。
-
-### 业务跑通了再敲表
-
-新字段先在业务层 mock（log 出形状），业务跑通了再回头敲 schema + 接 ORM。
-**参考**：proxy_record 表是「业务跑通看清数据形状 → 再设计 schema → 替换 stub」走完整周期的样板。
-
----
-
-## 反模式禁令
+## 8. 通用反模式
 
 | 不要做 | 为什么 |
 |-------|------|
-| 给 atom 函数加 DB 操作 | atom 必须无状态 |
-| 业务层 import paramiko 直接用 | 必须走 Manager / Session |
-| `print(...)` | 用 logger |
-| 异常吞掉不传播也不记日志 | 至少 logger.warning |
-| 加新依赖不更新 pyproject.toml | 必须可复现安装 |
-| `try: ... except Exception: pass` 无注释 | 必须加 `# noqa: BLE001 — <意图>` |
-| Mock 测试不验证 DB 状态变化 | 业务的核心副作用就是改 DB |
-| 改测试断言"修"挂掉的测试 | 先看为什么挂、是不是代码 bug |
-| `git add -A` / `git add .` 图省事 | 会把未跟踪文件一并提交 |
-| 各领域包里冗余维护同一份常量 | 抽到 core 单一真相源 |
-| atom.py / service.py 混装服务管理 + 配置管理 | >200 行时拆 service.py + config.py |
-| atom 在 try/except 里默默吞错返回 default | atom 失败必须抛领域异常子类 |
+| 一次性塞 10+ 决策点让用户拍 | 注意力溢出,用户"装不下" |
+| 用技术语言写给用户看的东西 | 产品视角看不懂就没法判断 |
+| 自作主张分类/合并/拆分模块 | 必须先反问用户确认归属 |
+| "我已经准备好了你看看吧"然后塞文件 | 违反"落文件前先列清单" |
+| 在 CLAUDE.md 里写"当前清单"(当前 N 个工人...) | 业务变化时污染长期约束 |
+| 把验收标准复制到多处(task / TC / spec 各一份) | 必然漂移,违反 single source of truth |
+| spec.md 里出现"标准 A 和标准 B"两份并列 | 冲突源,必须替换或场景分化 |
+| 拍板前就开 task 文件 | 任务可落 5 条前置全部满足才能开 |
+| 跳过业务流程直接讨论 MCP / 协议层 | 拆解方法论反模式 |
+| 一次性砸 7 问引导清单 | 用户当前心智层不需要全部,只问下一个 |
+| 改 spec.md 不列下游影响 | 下游 TC 不知道要重跑,漂移 |
+| 用户口述模块归属不明就硬塞 | 必须反问确认 |
+| 给用户用英文术语命名讨论 | 大白话中文是义务,英文留代码层 |
+| 无状态强行包类 | Python 哲学:简单就好 |
+| spec.md 没 §工具清单就开 task | 实现者会乱建文件位置 |
+| ⚠️ **严禁 `git add -A` / `git add .` 图省事** | 会一锅端未跟踪文件(CLAUDE.md 本地修订 / 草稿 / .env / 临时脚本)。**必须按文件路径显式 `git add path/to/file ...`** |
 
 ---
 
 ## 一句话总结
 
-**Don't over-engineer. Layer strictly. Catch specifically. Hint actionably. Commit cohesively. Log conversationally for humans, structurally for AI. Defer the unknown.**
+**散点接住 + 编号回应 + 一次一个文件 + 永远先问归属 + 决策权留给用户。**
+**业务先于服务、服务先于工具、人话先于技术、骨架先于细节。**
+**讨论自顶向下,落地自底向上;有状态用类,无状态用函数。**
