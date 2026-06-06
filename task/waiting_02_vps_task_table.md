@@ -1,35 +1,42 @@
-# T-02 建 vps_task 异步任务表 + 通用 TaskStatus 类
+# T-02 建 vps_task 异步任务表 + 通用 TaskStatus 类（v4 对齐）
 
 **ID**: T-02
-**前置依赖**: 无(可与 T-01 并行)
+**前置依赖**: 无（可与 T-01 并行）
 **后续依赖**: T-04 SSHWorker._入库派任务 需要本任务完成
 
 ---
 
 ## 验收锚点
 
+- `tests_behavior/ssh_worker/spec.md` v4 §3 路线 B ④（SSHWorker 派 task）
+- `tests_behavior/ssh_worker/spec.md` v4 §5 不变量：**错误信息只住 vps_task 表，不住 vps_record**
+- `tests_behavior/ssh_worker/spec.md` v4 §0 实现者硬约束（旧代码姿势 + 缺工具先报告）
 - `CLAUDE.local.md` §4 task 表 + worker 接力规则
-- `docs/adr/0001-workers-replace-services.md` §决策 §3(task 表是异步协调媒介)
-- `docs/adr/0002-takeover-mode-handled-by-xray-worker.md` §决策(stage / used_port_count 由谁写)
-- `tests_behavior/xray_worker/spec.md` §2 入口契约 + §7 失败处理(状态机)
-- `tests_behavior/ssh_worker/spec.md` §3 路线 B ④(入库时建一条 vps_task)
+- `CLAUDE.local.md` §0 legacy 代码三档姿势表（services / test / xray 旧函数禁直接 import）
+- `docs/adr/0001-workers-replace-services.md` §决策（task 表是异步协调媒介）
+
+---
 
 ## 改动文件清单
 
 ### 改 `db/models.py`
 
 ```
-① 加 class TaskStatus 常量类(通用,给所有 task 表共用):
-     PENDING         = "pending"
-     IN_PROGRESS     = "in_progress"
-     PENDING_RETRY   = "pending_retry"
-     DONE            = "done"
-     FAILED          = "failed"
-     CIRCUIT_BROKEN  = "circuit_broken"
+① 加 class TaskStatus 常量类（通用，给所有 task 表共用）:
+     PENDING      = "pending"      # SSHWorker 派任务时
+     IN_PROGRESS  = "in_progress"  # XrayWorker 抢到时
+     DONE         = "done"         # XrayWorker 干完成功
+     FAILED       = "failed"       # XrayWorker 内部重试 N 次后仍失败（终态）
+
+   注意: 只 4 个值（v2 计划 6 值，v4 精简删除 PENDING_RETRY / CIRCUIT_BROKEN）
+   理由（用户拍板）:
+     - 一条任务的生命周期就是 待办 → 进行中 → 完成/失败，没了
+     - 重试 / 退避 / 熔断细节藏在 XrayWorker 内部，不出 task 状态机
+     - "施工中"语义在 vps_record.stage=running 表达（资源占用），不在 task 表
 
 ② 加 class VPSTask(Base) ORM 模型, 字段见下面
 
-③ 注意:本任务不建 ip_task(留给 T-XX 单独任务,共用 TaskStatus)
+③ 注意: 本任务不建 ip_task（留给 T-XX 单独任务, 未来共用 TaskStatus）
 ```
 
 ### 改 `db/__init__.py`
@@ -40,7 +47,7 @@ __all__ 加: VPSTask, TaskStatus
 
 ### 新建 `tests_behavior/_data_structures/test_vps_task.py`
 
-11 个 schema 测试(详见下面)
+11 个 schema 测试（详见下面）
 
 ### 不动
 
@@ -51,69 +58,95 @@ __all__ 加: VPSTask, TaskStatus
 
 ---
 
-## 字段轮廓(给实现者参考)
+## 字段轮廓（给实现者参考）
 
-| 字段名 | 类型 | 默认值 | 含义(大白话) |
-|--------|------|--------|------------|
+| 字段名 | 类型 | 默认值 | 含义（大白话） |
+|--------|------|--------|--------------|
 | id | int PK autoincrement | — | 任务编号 |
-| vps_id | int FK→vps_record.id | 必填,nullable=False | 哪台 VPS |
-| status | str(16) NOT NULL | "pending" | 现在到哪一步了 |
-| retry_count | int NOT NULL | 0 | 失败了几次 |
-| next_run_at | datetime NOT NULL | now() | 下次什么时候再试 |
-| last_error_code | str(32) | "" | 最近一次失败的错误代号 |
-| last_error_msg | str(255) | "" | 最近一次失败的人话原因 |
-| worker_id | str(64) | "" | 谁在锁着这条 |
-| locked_until | datetime / nullable | NULL | 锁过期时间(软锁) |
+| vps_id | int FK→vps_record.id ondelete=RESTRICT | 必填, nullable=False | 哪台 VPS |
+| status | str(16) NOT NULL | "pending" | 任务进度，只 4 个值 |
+| retry_count | int NOT NULL | 0 | **XrayWorker 内部用**：失败几次了 |
+| next_run_at | datetime NOT NULL | now() | **XrayWorker 内部用**：下次什么时候再试（退避时间）|
+| last_error_code | str(32) NOT NULL | "" | 最近一次失败的错误代号 |
+| last_error_msg | str(255) NOT NULL | "" | 最近一次失败的人话原因 |
+| worker_id | str(64) NOT NULL | "" | 谁在锁着这条 |
+| locked_until | datetime / nullable | NULL | 锁过期时间（软锁） |
 | created_at | datetime NOT NULL | server_default now() | 啥时候建的 |
 | updated_at | datetime NOT NULL | server_default now() + onupdate now() | 啥时候改的 |
-| completed_at | datetime / nullable | NULL | 啥时候完工的(仅 status=done 时填) |
+| completed_at | datetime / nullable | NULL | 啥时候完工的（仅 status=done 时填） |
+
+### 字段语义注释（关键 — v4 修订）
+
+```
+retry_count + next_run_at + worker_id + locked_until 这 4 个字段:
+  仍然保留，但语义改了 —— 都是 XrayWorker 内部用，不再驱动 task 状态机
+
+  v2 计划:
+    in_progress → pending_retry: 临时错（网络抖/超时），退避后重试
+    in_progress → circuit_broken: 连续 N 次同 code，熔断
+
+  v4 实际:
+    没有 pending_retry / circuit_broken 状态
+    XrayWorker 内部循环重试（用 retry_count + next_run_at 自管退避）
+    重试 N 次仍失败 → 直接标 status=failed（终态，人介入）
+    in_progress 期间 worker_id + locked_until 持锁防其他 worker 抢
+
+  设计意图:
+    任务表瘦身，只反映外部能看到的进度状态
+    重试细节藏在工人内部，task 状态机干净
+```
+
+---
 
 ## 索引
 
 ```
 ix_vps_task_status_next_run  on (status, next_run_at)
-   给谁用: worker 扫表领活儿(每秒发生),按 pending+next_run_at 查
-   原因  : 这是最高频查询,必须索引
+   给谁用: worker 扫表领活儿（每秒发生），按 pending+next_run_at 查
+   原因:  这是最高频查询，必须索引
 
 ix_vps_task_vps_status       on (vps_id, status)
-   给谁用: 查"VPS#X 当前有没有任务在跑"(比如挑可投产 VPS)
-   原因  : 用于"在 VPS 池里找空闲机器"
+   给谁用: 查"VPS#X 当前有没有任务在跑"（比如挑可投产 VPS 时做双表 join）
+   原因:  支持业务层挑机时双表查询（vps.stage + task.status）
 
-注:不用复合主键,id 单列 PK 即可
-注:不加 worker_id 索引(查询不频繁)
+注: 不用复合主键, id 单列 PK 即可
+注: 不加 worker_id 索引（查询不频繁）
 ```
 
 ---
 
-## 实现轮廓(给实现者参考,不强制 1:1)
+## 实现轮廓（给实现者参考，不强制 1:1）
 
-### TaskStatus 类风格(沿用现有项目状态常量类风格)
+### TaskStatus 类风格（沿用现有项目状态常量类风格）
 
 ```python
 class TaskStatus:
-    """task 表通用状态机(vps_task / 未来 ip_task 共用)。
+    """task 表通用状态机（vps_task / 未来 ip_task 共用）。
+
+    v4 拍板：只 4 个值。重试 / 退避 / 熔断细节藏在工人内部。
 
     谁推进:
       pending → in_progress    : worker 抢到锁
-      in_progress → done       : 干完
-      in_progress → pending_retry: 临时错(网络抖/超时),退避后重试
-      in_progress → failed     : 永久错(密码改了),需人介入
-      in_progress → circuit_broken: 连续 N 次同 code,熔断
+      in_progress → done       : 干完成功
+      in_progress → failed     : 工人内部重试 N 次仍失败（终态）
+
+    关键约束:
+      没有 pending_retry：工人在 in_progress 期间内部循环重试
+                          （用 retry_count + next_run_at 自管退避）
+      没有 circuit_broken：retry_count >= N 直接标 failed
     """
 
-    PENDING         = "pending"
-    IN_PROGRESS     = "in_progress"
-    PENDING_RETRY   = "pending_retry"
-    DONE            = "done"
-    FAILED          = "failed"
-    CIRCUIT_BROKEN  = "circuit_broken"
+    PENDING     = "pending"
+    IN_PROGRESS = "in_progress"
+    DONE        = "done"
+    FAILED      = "failed"
 ```
 
-### VPSTask 模型示例(沿用现有 ORM 风格)
+### VPSTask 模型示例（沿用现有 ORM 风格）
 
 ```python
 class VPSTask(Base):
-    """VPS 装机/维护类任务。XrayWorker 消费。
+    """VPS 装机 / 纳管类任务。XrayWorker 消费。
 
     每条 = 一个"装 xray / 启停 xray / 纳管"活儿。
     SSHWorker 入库 VPS 时建一条 pending,
@@ -166,7 +199,7 @@ class VPSTask(Base):
         )
 ```
 
-### dev SQLite 迁移说明(给用户)
+### dev SQLite 迁移说明（给用户）
 
 ```
 本任务只加新表, 不动旧表, 因此:
@@ -175,73 +208,110 @@ class VPSTask(Base):
                     from db.models import VPSTask; \
                     Base.metadata.create_all(engine, tables=[VPSTask.__table__])"
 
-旧 dev 数据保留(本任务不影响)。
+旧 dev 数据保留（本任务不影响）。
 ```
 
 ---
 
-## 测试用例(实现者按这些写 .py)
+## 测试用例（实现者按这些写 .py）
 
 测试文件: `tests_behavior/_data_structures/test_vps_task.py`
 
 ```
 TC-01  建新 VPSTask, status 默认 "pending"
+
 TC-02  retry_count 默认 0
-TC-03  next_run_at 默认 = now() 自动(server_default)
+
+TC-03  next_run_at 默认 = now() 自动 (server_default)
+
 TC-04  worker_id / locked_until / completed_at 默认可空/空串
-TC-05  TaskStatus 类只有 6 个常量(PENDING/IN_PROGRESS/PENDING_RETRY/
-       DONE/FAILED/CIRCUIT_BROKEN), 无其他
-TC-06  status 字段能存这 6 个值, 存进 DB 后查回正确
-TC-07  vps_id FK 引用不存在的 vps_record 报错(SQLite FK 开启时)
-TC-08  update task 后 updated_at 自动变(onupdate=now)
-TC-09  update completed_at 业务约束:仅 status='done' 时填(DB 不强制,
-       但测试验证业务层调用模式)
-TC-10  两个索引建好:查 sqlite_master 含 ix_vps_task_status_next_run +
-       ix_vps_task_vps_status
-TC-11  ⚠️ 抢锁原子性(标记 @skip,等真机环境再测)
-       预期场景:两个 worker 同时跑
+
+TC-05  TaskStatus 类只有 4 个常量:
+         PENDING / IN_PROGRESS / DONE / FAILED
+       不存在 PENDING_RETRY / CIRCUIT_BROKEN 等旧值
+       (用 assert hasattr / not hasattr 验证)
+
+TC-06  status 字段能存这 4 个值, 存进 DB 后查回正确
+       TaskStatus.PENDING / IN_PROGRESS / DONE / FAILED 都能 round-trip
+
+TC-07  vps_id FK 引用不存在的 vps_record 报错 (SQLite FK 开启时)
+
+TC-08  update task 后 updated_at 自动变 (onupdate=now)
+
+TC-09  状态转换 happy path: pending → in_progress → done
+       (旧 v2 的 in_progress → pending_retry 测试**整删** —— 不存在该状态)
+       验证: task 经过 3 个状态后 status=done 且 completed_at 非空
+
+TC-10  两个索引建好: 查 sqlite_master 含
+         ix_vps_task_status_next_run + ix_vps_task_vps_status
+
+TC-11  ⚠️ 抢锁原子性（标记 @skip, 等真机环境再测）
+       预期场景: 两个 worker 同时跑
          UPDATE vps_task SET status='in_progress', worker_id=?
          WHERE id=? AND status='pending'
        只能 1 个 affected_rows=1, 另一个 affected_rows=0
-       SQLite 单连接难测,加 pytest.mark.skip 或 unittest skip
-       注释:"等真机 PostgreSQL/MySQL 多连接环境验证"
+       SQLite 单连接难测, 加 pytest.mark.skip 或 unittest skip
+       注释: "等真机 PostgreSQL/MySQL 多连接环境验证"
+
 TC-12  __repr__ 输出 id/vps_id/status/retry_count,
-       不输出 last_error_msg(长字段)
+       不输出 last_error_msg (长字段)
 ```
 
 测试通用约束:
-- 用 SQLite 内存 DB, 不污染 dev
+- 用 SQLite 内存 DB, 不污染 dev DB
 - 测试前后清表干净
+- 沿用 test/test_vps_model.py 现有测试风格（**只参考思路，不 import 旧测试**）
 
 ---
 
-## 实现者完工标准(自检清单)
+## 实现者完工标准（自检清单）
 
 ```
-- [ ] 11 个测试全过(TC-11 通过 skip 计入"全过")
+- [ ] 12 个测试全过 (TC-11 通过 skip 计入"全过")
 - [ ] db/models.py 内 grep 'class VPSTask' 唯一一处
 - [ ] db/models.py 内 grep 'class TaskStatus' 唯一一处
+- [ ] TaskStatus 只 4 个常量, grep 'PENDING_RETRY' / 'CIRCUIT_BROKEN' 在 db/models.py 内**无残留**
 - [ ] db/__init__.py __all__ 含 VPSTask + TaskStatus
 - [ ] 不动 services/* / xray/* / workers/* / tools/* / proxy/*
 - [ ] git add 只 add db/models.py / db/__init__.py / 新测试
-- [ ] commit 标题: feat(db): 加 VPSTask 异步任务表 + TaskStatus 常量
-- [ ] 任务结尾留 dev DB 建表说明给用户(上面那段)
+- [ ] 任务结尾留 dev DB 建表说明给用户（上面那段）
+- [ ] commit 标题: feat(db): 加 VPSTask 异步任务表 + TaskStatus 4 值
+- [ ] 如遇缺工具 / 不清楚的设计点: 不要自己拍, **停下来报告给 Claude / 用户**
+       (spec v4 §0 第 2 条规则)
 ```
+
+---
+
+## 实现过程记录（实现者完工时填）
+
+> 实现期间如果造了新工具 / 方法 / 常量，按这个格式记录:
+
+```
+- 造了 <工具名>（类 / 函数 / 方法）
+  住 <文件路径>
+  干啥 <一句话功能>
+  测试 <对应 TC 编号>
+  审批 用户在 <对话/issue> 批准
+```
+
+如果只是按本任务单清单建表，没造新工具，写"无新增工具"即可。
 
 ---
 
 ## Claude 验收检查清单
 
 ```
-□ 跑 tests_behavior/_data_structures/test_vps_task.py 全过(含 skip TC-11)
+□ 跑 tests_behavior/_data_structures/test_vps_task.py 全过 (含 skip TC-11)
 □ git diff db/models.py:
-    - 确认加了 class TaskStatus(6 常量没多没少)
-    - 确认加了 class VPSTask(字段没多没少, 类型对)
+    - 确认加了 class TaskStatus (**4 个常量没多没少**)
+    - 确认加了 class VPSTask (字段没多没少, 类型对)
     - 确认 2 个索引名对
-    - 确认 vps_id FK 指向 vps_record.id
+    - 确认 vps_id FK 指向 vps_record.id + ondelete=RESTRICT
+    - 确认无 PENDING_RETRY / CIRCUIT_BROKEN 常量残留
 □ git diff db/__init__.py: 确认 __all__ 更新
-□ 对照 ADR-0001/0002 检查"task 表是协调媒介"的语义
-□ 字段命名风格: 沿用现有简洁风格(last_error_code / next_run_at)
+□ 对照 spec v4 §5 不变量"错误住任务表"检查 last_error_code/msg 字段就位
+□ 字段命名风格: 沿用现有简洁风格（last_error_code / next_run_at）
+□ 实现过程记录段是否填了（造了啥/无新增工具）
 □ 偏差但合理 → 抛给用户决策
 □ 偏差不合理 → 打回让实现者改
 ```
@@ -250,8 +320,20 @@ TC-12  __repr__ 输出 id/vps_id/status/retry_count,
 
 ## 备注
 
-本任务与 T-01 (VPSRecord schema v2) **完全独立**, 可并行实施:
-- 都改 db/models.py 但改不同位置(T-01 改老类, T-02 加新类), git 合并不冲突
+本任务与 T-01 (VPSRecord schema v4) **完全独立**, 可并行实施:
+- 都改 db/models.py 但改不同位置 (T-01 改老类, T-02 加新类), git 合并不冲突
 - 各自的测试文件独立
 
-完工后 + T-01 完工后, T-04 (SSHWorker 实现) 才能开始(数据层依赖齐了)。
+完工后 + T-01 完工后, T-04 (SSHWorker 实现) 才能开始（数据层依赖齐了）。
+
+---
+
+## v4 vs v2 修订总结
+
+| 项 | v2 计划 | v4 实际 |
+|---|--------|--------|
+| TaskStatus 常量数 | 6 (含 PENDING_RETRY / CIRCUIT_BROKEN) | **4** (删 PENDING_RETRY / CIRCUIT_BROKEN) |
+| 重试逻辑住哪 | task 状态机层（pending_retry 状态）| **XrayWorker 内部循环**（retry_count + next_run_at 自管） |
+| 熔断逻辑住哪 | task 状态机层（circuit_broken 状态）| **XrayWorker 内部判断**（retry_count >= N 直接标 failed） |
+| VPSTask 字段 | 同 v2 | 同 v2（全保留，retry_count + next_run_at + worker_id + locked_until 语义改） |
+| 测试 TC 数 | 12 | 12（TC-05/06/09 内容改） |
