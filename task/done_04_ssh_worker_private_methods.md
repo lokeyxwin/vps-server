@@ -391,6 +391,59 @@ TC-04-f  提示文案合规:
 
 如果没改/造任何工具，写"无新增工具"即可。
 
+### 本次实现记录（2026-06-07）
+
+按 spec v4 §0 第 2 条规则,实现者识别出 2 个缺工具点,停下报告,用户拍板**方案 B**
+(新方法隔离 legacy)。批准位置:本次对话(用户原话"保留 spec v4 §3 路线 C 重试机制。
+按方案 B 实现 ...")。
+
+```
+- 造了 connect_with_retry 函数
+  住 ssh/ops.py:148-258
+  干啥 SSHWorker 专用入口探测连接:3 次尝试 / 10s 间隔 / timeout+refused 也走重试 /
+       AuthFailedError 立即抛(不重试)。单次 paramiko connect 的 timeout 默认 30s
+       (比 SSH_CONNECT_TIMEOUT=10 长,作慢网络/速率限制兜底)。抛同族异常
+       (AuthFailedError / ConnectTimeoutError / ConnectRefusedError / ConnectionError),
+       SSHWorker 上层按类型分场景处理。旧 connect_server 一字不改,旧 services/ 行为不变。
+  常量 SSHWORKER_RETRY_ATTEMPTS=3 / SSHWORKER_RETRY_INTERVAL=10.0 / SSHWORKER_CONNECT_TIMEOUT_DEFAULT=30
+  测试 间接走 TC-02 (mock VPSSession 验异常类型路径);本身不另设单测,
+       因为是 paramiko 实网层逻辑,留给真机验证
+  审批 用户在本次对话拍板方案 B + 30s + 10s
+
+- 改了 VPSSession.__init__
+  住 ssh/session.py:50-65
+  干啥 新增可选入参 connect_timeout: int = 30 (默认值从 ssh.ops.SSHWORKER_CONNECT_TIMEOUT_DEFAULT 拿)。
+       内部 connect() 改调 connect_with_retry(原调 connect_server),透传 connect_timeout。
+       旧调用方不传 connect_timeout 也兼容(默认 30s),只是从此走"3 次重试 + 10s 间隔"路径。
+  测试 TC-02 (mock VPSSession 验入口 with 包起来用完即关)
+  审批 用户在本次对话拍板方案 B
+
+- 实现了 SSHWorker 4 个私有方法
+  住 workers/ssh_worker.py
+  干啥 _查重 / _敲门看一眼 / _入库派任务 / _失败路径处理 按 spec v4 §3 三条主路线 +
+       §5 不变量 落地。process() 仍保留 pass 占位留给 T-05。
+  测试 TC-01 (7/7) + TC-02 (7/7) + TC-03 (7/7) + TC-04 (6/6) = 27/27 全过
+  审批 任务单本身已经是金标准
+
+不变量验证(spec v4 §5):
+  ✓ SSHWorker 只 touch vps_record + vps_task 两表
+  ✓ SSHWorker 写入的 stage 永远 connectable (TC-03-a/b)
+  ✓ SSHWorker 写入的 xray_version 永远空字符串 (TC-03-e 防回退)
+  ✓ 错误信息只住 vps_task 表 (TC-01-c/e 验证从 task 取 last_error_*)
+  ✓ 路线 C(SSH 失败) 永远不写库 (TC-04-e 防回退)
+  ✓ _敲门看一眼 内部不调 XrayManager (TC-02-f 防回退,顶层 namespace + 实例化双断言)
+  ✓ _入库派任务 写入的 xray_version 显式为 "" (TC-03-e 防回退,原生 SQL 验)
+```
+
+跑通命令(参考):
+```bash
+VPS_SERVER_TESTING=1 python -m unittest \
+  tests_behavior.ssh_worker.TC-01_query_existing \
+  tests_behavior.ssh_worker.TC-02_probe_ssh \
+  tests_behavior.ssh_worker.TC-03_persist \
+  tests_behavior.ssh_worker.TC-04_failure
+```
+
 ---
 
 ## Claude 验收检查清单

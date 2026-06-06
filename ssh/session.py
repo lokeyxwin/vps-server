@@ -14,7 +14,8 @@ from toolbox.ports import (
     is_port_free,
 )
 from ssh.ops import (
-    connect_server,
+    SSHWORKER_CONNECT_TIMEOUT_DEFAULT,
+    connect_with_retry,
     close_server,
     execute_command,
     get_system_info,
@@ -53,11 +54,15 @@ class VPSSession:
         username: str,
         password: str,
         port: int = 22,
+        connect_timeout: int = SSHWORKER_CONNECT_TIMEOUT_DEFAULT,
     ) -> None:
         self.ip = ip
         self.username = username
         self.password = password
         self.port = port
+        # spec v4 §3 路线 C "连接超时延长兜底": 默认 30s,
+        # 内部 connect() 走 connect_with_retry(3 次 / 10s 间隔)
+        self.connect_timeout = connect_timeout
         self._client: paramiko.SSHClient | None = None
 
     @classmethod
@@ -86,8 +91,12 @@ class VPSSession:
 
     def connect(self) -> "VPSSession":
         if self._client is None:
-            self._client = connect_server(
-                self.ip, self.username, self.password, self.port
+            self._client = connect_with_retry(
+                self.ip,
+                self.username,
+                self.password,
+                self.port,
+                connect_timeout=self.connect_timeout,
             )
         return self
 

@@ -144,6 +144,124 @@ def connect_server(
     raise ConnectionError(CONNECTION_ERROR_MESSAGE) from last_exc
 
 
+# spec v4 §3 路线 C: SSHWorker 入口探测的重试机制
+# (新代码用 connect_with_retry, 旧 services/* 仍用 connect_server)
+SSHWORKER_RETRY_ATTEMPTS = 3
+SSHWORKER_RETRY_INTERVAL = 10.0  # 10s 间隔 (spec v4 用户拍板)
+SSHWORKER_CONNECT_TIMEOUT_DEFAULT = 30  # 连接超时延长兜底, 默认 30s
+
+
+def connect_with_retry(
+    ip: str,
+    username: str,
+    password: str,
+    port: int,
+    connect_timeout: int = SSHWORKER_CONNECT_TIMEOUT_DEFAULT,
+) -> paramiko.SSHClient:
+    """SSHWorker 专用入口探测连接,实现 spec v4 §3 路线 C 的重试策略.
+
+    与旧 connect_server 的区别:
+    - timeout / refused 也走退避重试 (3 次 / 10s 间隔)
+    - 连接超时可调 (默认 30s 比 SSH_CONNECT_TIMEOUT=10 长, 作慢网络/速率限制兜底)
+    - AuthFailedError 仍立即抛 (账密错重试无意义, 跟 connect_server 一致)
+
+    失败时抛 AuthFailedError / ConnectTimeoutError / ConnectRefusedError / ConnectionError
+    (跟 connect_server 抛同一族异常, SSHWorker 上层按类型分场景处理).
+
+    旧 connect_server 一字不改 -- 这是新方法, 隔离 legacy.
+    """
+    last_exc: Exception | None = None
+
+    for attempt in range(1, SSHWORKER_RETRY_ATTEMPTS + 1):
+        logger.info(
+            "connect_with_retry: ip=%s port=%s user=%s timeout=%ss → connecting (attempt %d/%d)...",
+            ip, port, username, connect_timeout, attempt, SSHWORKER_RETRY_ATTEMPTS,
+        )
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        try:
+            client.connect(
+                hostname=ip,
+                port=port,
+                username=username,
+                password=password,
+                timeout=connect_timeout,
+                allow_agent=False,
+                look_for_keys=False,
+            )
+            logger.info(
+                "connect_with_retry: ip=%s port=%s user=%s → ok (attempt %d/%d)",
+                ip, port, username, attempt, SSHWORKER_RETRY_ATTEMPTS,
+            )
+            return client
+        except paramiko.AuthenticationException as exc:
+            client.close()
+            logger.warning(
+                "connect_with_retry: ip=%s user=%s → auth_failed, no retry (%s)",
+                ip, username, exc,
+            )
+            raise AuthFailedError(AUTH_FAILED_MESSAGE) from exc
+        except (socket.timeout, TimeoutError) as exc:
+            client.close()
+            last_exc = ConnectTimeoutError(CONNECT_TIMEOUT_MESSAGE)
+            last_exc.__cause__ = exc
+            if attempt < SSHWORKER_RETRY_ATTEMPTS:
+                logger.warning(
+                    "connect_with_retry: ip=%s port=%s attempt %d/%d timeout (%s), retry in %.1fs",
+                    ip, port, attempt, SSHWORKER_RETRY_ATTEMPTS, exc, SSHWORKER_RETRY_INTERVAL,
+                )
+                time.sleep(SSHWORKER_RETRY_INTERVAL)
+                continue
+            logger.error(
+                "connect_with_retry: ip=%s port=%s → all %d attempts timeout (last %s)",
+                ip, port, SSHWORKER_RETRY_ATTEMPTS, exc,
+            )
+            raise ConnectTimeoutError(CONNECT_TIMEOUT_MESSAGE) from exc
+        except ConnectionRefusedError as exc:
+            client.close()
+            last_exc = ConnectRefusedError(CONNECT_REFUSED_MESSAGE)
+            last_exc.__cause__ = exc
+            if attempt < SSHWORKER_RETRY_ATTEMPTS:
+                logger.warning(
+                    "connect_with_retry: ip=%s port=%s attempt %d/%d refused (%s), retry in %.1fs",
+                    ip, port, attempt, SSHWORKER_RETRY_ATTEMPTS, exc, SSHWORKER_RETRY_INTERVAL,
+                )
+                time.sleep(SSHWORKER_RETRY_INTERVAL)
+                continue
+            logger.error(
+                "connect_with_retry: ip=%s port=%s → all %d attempts refused (last %s)",
+                ip, port, SSHWORKER_RETRY_ATTEMPTS, exc,
+            )
+            raise ConnectRefusedError(CONNECT_REFUSED_MESSAGE) from exc
+        except paramiko.SSHException as exc:
+            # 老服务器握手中断等瞬态错, 同 timeout/refused 一样走退避
+            client.close()
+            last_exc = exc
+            if attempt < SSHWORKER_RETRY_ATTEMPTS:
+                logger.warning(
+                    "connect_with_retry: ip=%s port=%s attempt %d/%d ssh_exc (%s: %s), retry in %.1fs",
+                    ip, port, attempt, SSHWORKER_RETRY_ATTEMPTS,
+                    type(exc).__name__, exc, SSHWORKER_RETRY_INTERVAL,
+                )
+                time.sleep(SSHWORKER_RETRY_INTERVAL)
+                continue
+            logger.error(
+                "connect_with_retry: ip=%s port=%s → all %d attempts failed (last %s: %s)",
+                ip, port, SSHWORKER_RETRY_ATTEMPTS, type(exc).__name__, exc,
+            )
+            raise ConnectionError(CONNECTION_ERROR_MESSAGE) from exc
+        except Exception as exc:  # noqa: BLE001 — 兜底未分类异常转业务错误
+            client.close()
+            logger.error(
+                "connect_with_retry: ip=%s port=%s → failed (type=%s reason=%s)",
+                ip, port, type(exc).__name__, exc,
+            )
+            raise ConnectionError(CONNECTION_ERROR_MESSAGE) from exc
+
+    # 防御性: 循环正常退出按理不该到这里
+    raise ConnectionError(CONNECTION_ERROR_MESSAGE) from last_exc
+
+
 def close_server(client: paramiko.SSHClient) -> None:
     """关闭 SSH 连接。重复调用安全，传入 None 也安全。
 

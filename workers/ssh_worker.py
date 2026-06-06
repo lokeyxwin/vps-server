@@ -29,6 +29,47 @@
 
 from __future__ import annotations
 
+from db.models import TaskStatus, VPSRecord, VPSStage, VPSTask
+from db.session import session_scope
+from log import get_logger
+from ssh.ops import (
+    AuthFailedError,
+    ConnectRefusedError,
+    ConnectTimeoutError,
+)
+from ssh.session import VPSSession
+
+
+logger = get_logger("services.ssh_worker")
+
+
+# ============ 路线 C 失败提示文案 (spec v4 §3 路线 C) ============
+# 用户拍板的口径:
+#   - 不引导用户去防火墙作为首要排查(端口错/安全策略组才是主因)
+#   - 账密错 -> 让用户核对 0/o l/I/1 + 区分服务商面板密码 vs SSH 密码
+
+_AUTH_FAILED_MESSAGE = (
+    "请核对账号密码。OCR 可能看错 0/o、l/I/1；"
+    "服务商面板密码 ≠ SSH 密码。"
+)
+
+
+def _build_timeout_message(port: int) -> str:
+    return (
+        f"SSH 端口 {port} 连接超时。"
+        f"可能端口错 → 服务商控制台核对远程登录端口；"
+        f"端口对的话 → 安全策略组开放入方向（含 22 或远程登录端口）；"
+        f"都对还不行 → 服务商面板自查。"
+    )
+
+
+def _build_refused_message(port: int) -> str:
+    return (
+        f"SSH 端口 {port} 被拒绝。"
+        f"可能端口错或服务未监听该端口 → 服务商控制台核对远程登录端口；"
+        f"端口对的话 → 安全策略组开放入方向。"
+    )
+
 
 class SSHWorker:
     """敲门工.调用方:tools/rgvps.py 的 handler."""
@@ -53,26 +94,156 @@ class SSHWorker:
         见 spec.md §3 三条主路线.
         返回 dict 含 status + 其他业务字段.
         """
-        pass    # 实现等任务单填
+        pass    # 实现等 T-05 任务单填
 
     # ============ 工人私有的小工具(下划线开头) ============
 
-    def _查重(self, ip: str):
+    def _查重(self, ip: str) -> dict | None:
         """看 vps_record 表有没有这个 ip.
 
-        命中 → 返回打包好的现状 dict(含关联活跃 task).
+        命中 → 返回打包好的现状 dict(含关联活跃 task 或最近 task 的 last_error_*).
         没命中 → 返回 None.
+
+        spec v4:
+          - 删 stage_message 字段(错误信息住任务表)
+          - "活跃" status 集合: [PENDING, IN_PROGRESS] (v4 没有 PENDING_RETRY)
+          - 即便没活跃 task, 最近一条 task 的 last_error_* 也带回(便于 agent 转告)
         """
-        pass
+        with session_scope() as s:
+            rec = s.query(VPSRecord).filter_by(ip=ip).first()
+            if rec is None:
+                return None
+
+            # 找活跃 task(v4: pending / in_progress 两值)
+            active = (
+                s.query(VPSTask)
+                .filter(
+                    VPSTask.vps_id == rec.id,
+                    VPSTask.status.in_(
+                        [TaskStatus.PENDING, TaskStatus.IN_PROGRESS]
+                    ),
+                )
+                .order_by(VPSTask.created_at.desc())
+                .first()
+            )
+
+            # 没有活跃 task 时, 取最近一条 task 的错误信息(可能是 failed)
+            latest = None
+            if active is None:
+                latest = (
+                    s.query(VPSTask)
+                    .filter(VPSTask.vps_id == rec.id)
+                    .order_by(VPSTask.created_at.desc())
+                    .first()
+                )
+
+            active_task_dict = None
+            if active is not None:
+                active_task_dict = {
+                    "task_id": active.id,
+                    "status": active.status,
+                    "retry_count": active.retry_count,
+                    "next_run_at": (
+                        active.next_run_at.isoformat()
+                        if active.next_run_at is not None
+                        else ""
+                    ),
+                    "last_error_code": active.last_error_code,
+                    "last_error_msg": active.last_error_msg,
+                }
+
+            # 历史错误信息: 优先活跃 task, 没活跃就拿最近一条 (任何 status)
+            history_source = active if active is not None else latest
+            last_error_code = (
+                history_source.last_error_code if history_source is not None else ""
+            )
+            last_error_msg = (
+                history_source.last_error_msg if history_source is not None else ""
+            )
+
+            return {
+                "vps_id": rec.id,
+                "ip": rec.ip,
+                "stage": rec.stage,
+                "xray_version": rec.xray_version,
+                "os_name": rec.os_name,
+                "os_version": rec.os_version,
+                "is_active": rec.is_active,
+                "active_task": active_task_dict,
+                "last_error_code": last_error_code,
+                "last_error_msg": last_error_msg,
+            }
 
     def _敲门看一眼(self, ip: str, user: str, pwd: str, port: int) -> dict:
-        """SSH 探测 + 顺手采集 OS / xray 版本.
+        """SSH 探测 + 顺手采集 OS (spec v4 §3 路线 B 步骤①②③).
 
-        见 spec.md §3 路线 B ② ③.
-        返回 dict 含: ok / client / os_name / os_version / xray_version / error.
-        失败时 ok=False, error 内容含 auth_failed / timeout / refused / failed.
+        ⚠️ v4 不查任何 xray 信息, 绝不调用 XrayManager.
+        VPSSession with 包起来用完即关.
+
+        返回 dict:
+          - ok:            bool
+          - os_name:       str (拿不到留空)
+          - os_version:    str (拿不到留空)
+          - error_type:    str | None ('auth_failed' / 'timeout' / 'refused' / 'failed')
+          - error_message: str (ok=False 时填错误描述)
         """
-        pass
+        try:
+            with VPSSession(ip, user, pwd, port) as sess:
+                # spec v4 §6: SSH 通但 get_system_info 报错 → os 留空, ok 仍为 True
+                try:
+                    info = sess.get_system_info()
+                    os_name = info.get("os_name", "")
+                    os_version = info.get("os_version", "")
+                except Exception as exc:  # noqa: BLE001 — 读 OS 失败留空, 不影响 ok
+                    logger.warning(
+                        "_敲门看一眼: ip=%s get_system_info failed (%s), os 留空",
+                        ip, exc,
+                    )
+                    os_name = ""
+                    os_version = ""
+                return {
+                    "ok": True,
+                    "os_name": os_name,
+                    "os_version": os_version,
+                    "error_type": None,
+                    "error_message": "",
+                }
+        except AuthFailedError as exc:
+            logger.info("_敲门看一眼: ip=%s → auth_failed", ip)
+            return {
+                "ok": False,
+                "os_name": "",
+                "os_version": "",
+                "error_type": "auth_failed",
+                "error_message": str(exc) or _AUTH_FAILED_MESSAGE,
+            }
+        except ConnectTimeoutError as exc:
+            logger.info("_敲门看一眼: ip=%s port=%s → timeout", ip, port)
+            return {
+                "ok": False,
+                "os_name": "",
+                "os_version": "",
+                "error_type": "timeout",
+                "error_message": str(exc) or _build_timeout_message(port),
+            }
+        except ConnectRefusedError as exc:
+            logger.info("_敲门看一眼: ip=%s port=%s → refused", ip, port)
+            return {
+                "ok": False,
+                "os_name": "",
+                "os_version": "",
+                "error_type": "refused",
+                "error_message": str(exc) or _build_refused_message(port),
+            }
+        except Exception as exc:  # noqa: BLE001 — SSH 兜底, 转 failed status
+            logger.warning("_敲门看一眼: ip=%s → failed (%s: %s)", ip, type(exc).__name__, exc)
+            return {
+                "ok": False,
+                "os_name": "",
+                "os_version": "",
+                "error_type": "failed",
+                "error_message": str(exc),
+            }
 
     def _入库派任务(
         self,
@@ -84,30 +255,83 @@ class SSHWorker:
         provider: str,
         os_name: str,
         os_version: str,
-        xray_version: str,
-    ) -> int:
-        """写 vps_record(stage=connectable) + vps_task(install_xray, pending).
+    ) -> dict:
+        """写 vps_record(stage=connectable, xray_version="") + vps_task(pending).
 
-        返回 task_id.
-        见 spec.md §3 路线 B ④.
+        spec v4 路线 B ④:
+          - SSHWorker 不查 xray, xray_version 永远写 ""
+          - stage 永远 connectable
+          - 不写 stage_message (字段已删)
+
+        返回 dict: {vps_id, task_id, stage, os_name, os_version}.
+        (无 xray_version 字段, 因为 SSHWorker 路径不持有此信息)
         """
-        pass
+        with session_scope() as s:
+            rec = VPSRecord.from_form(
+                ip=ip,
+                username=user,
+                password=pwd,
+                port=port,
+                os_name=os_name,
+                os_version=os_version,
+                expire_date=ed,
+                provider_domain=provider,
+            )
+            # spec v4 §5 不变量: stage 永远 connectable, xray_version 永远 ""
+            rec.stage = VPSStage.CONNECTABLE
+            rec.xray_version = ""
+            s.add(rec)
+            s.flush()  # 拿 rec.id
+
+            task = VPSTask(vps_id=rec.id, status=TaskStatus.PENDING)
+            s.add(task)
+            s.flush()  # 拿 task.id
+
+            result = {
+                "vps_id": rec.id,
+                "task_id": task.id,
+                "stage": VPSStage.CONNECTABLE,
+                "os_name": os_name,
+                "os_version": os_version,
+            }
+            logger.info(
+                "_入库派任务: ip=%s → vps_id=%s task_id=%s stage=connectable",
+                ip, rec.id, task.id,
+            )
+            return result
 
     def _失败路径处理(
         self,
-        ip: str,
-        user: str,
-        pwd: str,
-        port: int,
-        ed,
-        provider: str,
-        error: str,
+        error_type: str,
+        error_message: str,
+        ip: str | None = None,
+        user: str | None = None,
+        port: int | None = None,
     ) -> dict:
-        """SSH 失败时分两种处理.
+        """SSH 失败时分场景抛回 (spec v4 §3 路线 C + §5 不变量).
 
-        - auth_failed → 不入库,直接返回错误
-        - timeout / refused → 内部重试 N 次(参数走 config.py)仍失败
-          → 入库 stage=unreachable + 提示语
-        见 spec.md §3 路线 C.
+        ⚠️ v4 大改: 全部抛回, **永远不入库**.
+        不熔断, 不再重试 (重试已在 _敲门看一眼 内部 connect_with_retry 走完).
+
+        返回 dict: {status, message}. **绝不写 DB**.
         """
-        pass
+        if error_type == "auth_failed":
+            return {
+                "status": "auth_failed",
+                "message": _AUTH_FAILED_MESSAGE,
+            }
+        if error_type == "timeout":
+            return {
+                "status": "ssh_timeout",
+                "message": _build_timeout_message(port if port is not None else 0),
+            }
+        if error_type == "refused":
+            return {
+                "status": "ssh_refused",
+                "message": _build_refused_message(port if port is not None else 0),
+            }
+        # 兜底 failed
+        return {
+            "status": "ssh_failed",
+            "message": f"SSH 连接失败: {error_message}",
+        }
