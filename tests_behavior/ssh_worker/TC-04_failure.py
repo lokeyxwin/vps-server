@@ -3,12 +3,12 @@
 [用例描述 —— DO NOT MODIFY]
 ========================================================================
 
-TC-04 SSHWorker._失败路径处理 行为单测 (spec v4)
+TC-04 SSHWorker._handle_failure 行为单测 (spec v4)
 
 故事:
   spec v4 路线 C 大改: SSH 失败全部抛回, **永远不入库**.
-  _失败路径处理 把 error_type 转成 status code + 给用户提示文案.
-  - 不熔断 (重试已在 _敲门看一眼 内部 connect_with_retry 走完)
+  _handle_failure 把 error_type 转成 status code + 给用户提示文案.
+  - 不熔断 (重试已在 _probe_ssh 内部 connect_with_retry 走完)
   - 4 种 status: auth_failed / ssh_timeout / ssh_refused / ssh_failed
 
 测试矩阵 (6 TC):
@@ -87,10 +87,10 @@ class TestSSHWorkerFailurePath(unittest.TestCase):
     # ---------- TC-04-a ----------
     def test_tc04a_auth_failed_returns_status_no_db(self):
         before = self._row_counts()
-        result = self.worker._失败路径处理(
+        result = self.worker._handle_failure(
             error_type="auth_failed",
             error_message="认证失败",
-            ip="1.2.3.4", user="root", port=22,
+            port=22,
         )
         after = self._row_counts()
         self.assertEqual(result["status"], "auth_failed")
@@ -100,10 +100,10 @@ class TestSSHWorkerFailurePath(unittest.TestCase):
     # ---------- TC-04-b ----------
     def test_tc04b_timeout_returns_status_no_db(self):
         before = self._row_counts()
-        result = self.worker._失败路径处理(
+        result = self.worker._handle_failure(
             error_type="timeout",
             error_message="超时",
-            ip="1.2.3.4", user="root", port=2222,
+            port=2222,
         )
         after = self._row_counts()
         self.assertEqual(result["status"], "ssh_timeout")
@@ -117,10 +117,10 @@ class TestSSHWorkerFailurePath(unittest.TestCase):
     # ---------- TC-04-c ----------
     def test_tc04c_refused_returns_status_no_db(self):
         before = self._row_counts()
-        result = self.worker._失败路径处理(
+        result = self.worker._handle_failure(
             error_type="refused",
             error_message="拒接",
-            ip="1.2.3.4", user="root", port=22,
+            port=22,
         )
         after = self._row_counts()
         self.assertEqual(result["status"], "ssh_refused")
@@ -129,10 +129,10 @@ class TestSSHWorkerFailurePath(unittest.TestCase):
     # ---------- TC-04-d ----------
     def test_tc04d_failed_returns_status_no_db(self):
         before = self._row_counts()
-        result = self.worker._失败路径处理(
+        result = self.worker._handle_failure(
             error_type="failed",
             error_message="网络中断",
-            ip="1.2.3.4", user="root", port=22,
+            port=22,
         )
         after = self._row_counts()
         self.assertEqual(result["status"], "ssh_failed")
@@ -144,9 +144,9 @@ class TestSSHWorkerFailurePath(unittest.TestCase):
         """spec v4 §5 不变量: 路线 C 永远不写库. 4 个 error_type 都验."""
         before = self._row_counts()
         for et in ("auth_failed", "timeout", "refused", "failed"):
-            self.worker._失败路径处理(
+            self.worker._handle_failure(
                 error_type=et, error_message="x",
-                ip="1.2.3.4", user="root", port=22,
+                port=22,
             )
         after = self._row_counts()
         self.assertEqual(before, after)
@@ -156,9 +156,9 @@ class TestSSHWorkerFailurePath(unittest.TestCase):
     def test_tc04f_messages_compliant_with_spec_v4_wording(self):
         """spec v4 用户拍板: 不引导用户去防火墙作首要排查, 主推端口/安全策略组."""
         # timeout
-        t = self.worker._失败路径处理(
+        t = self.worker._handle_failure(
             error_type="timeout", error_message="x",
-            ip="1.2.3.4", user="root", port=22,
+            port=22,
         )
         # spec v4: timeout 文案以"端口/安全策略组"为主, 不引导防火墙
         self.assertNotIn("防火墙", t["message"])
@@ -166,9 +166,9 @@ class TestSSHWorkerFailurePath(unittest.TestCase):
             "端口" in t["message"] or "安全策略组" in t["message"]
         )
         # refused
-        r = self.worker._失败路径处理(
+        r = self.worker._handle_failure(
             error_type="refused", error_message="x",
-            ip="1.2.3.4", user="root", port=22,
+            port=22,
         )
         self.assertNotIn("防火墙", r["message"])
         self.assertTrue(

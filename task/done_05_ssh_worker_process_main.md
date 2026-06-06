@@ -207,17 +207,31 @@ TC-05-i ⭐ 防回退测试（路线 A 不写库）
 
 ## 实现过程记录（实现者完工时填）
 
-> 如果造了新工具 / 改了现有工具，按这个格式记录：
+**无新增工具**。
 
-```
-- 改/造了 <工具名>
-  住 <文件路径>
-  干啥 <一句话>
-  测试 <TC 编号>
-  审批 用户在 <对话/issue> 批准
-```
+T-05 是纯编排任务,`process()` 完全靠组合 4 个私有方法（_查重 / _敲门看一眼 /
+_入库派任务 / _失败路径处理）跑 spec v4 §3 三条主路线,自身不直接调
+VPSSession / DB / XrayManager,符合 spec v4 §0 "工具优先复用"。
 
-如果只是编排 4 个私有方法没造新工具，写"无新增工具"即可。
+测试 9/9 全过：
+- `tests_behavior/ssh_worker/TC-05_main_flow.py` 新建
+- TC-05-a~f 用 `patch.object` mock 4 个私有方法验编排正确性
+- TC-05-g/h/i 是防回退,真 in-memory SQLite + patch `session_scope`,验:
+  - 路线 C 永不写库 (g)
+  - 路线 B 入库后 `vps_record.xray_version` 字面为 "" (h)
+  - 路线 A 已存在 record 时零写操作 (i,用 `side_effect=_boom` 强约束不该被调到)
+
+T-04 已有 TC-01~04 共 27/27 仍全过(未破坏 4 个私有方法)。
+
+**顺手做的事**:`tests_behavior/README.md` 新增"测试隔离 session_scope patch 套路"
+段,把 TC-01/03/04/05 共用的 in-memory SQLite + patch 套路抽成文档,后续
+xray_worker / ip_probe_worker / proxy_deploy_worker 各自 TC 可直接复用。
+跟 TC-05 一起 commit,不另开 commit。
+
+**待用户决策**:`workers/ssh_worker.py` 顶部 docstring 还残留 v3 描述
+(`status: unreachable`、`XrayManager.version`),跟 spec v4 矛盾。任务单要求
+"保留顶部 docstring 不动",本次未改,只在 TC-05 文件尾部结论里标注。建议下次小修
+一并清理(无代码影响,仅文档)。
 
 ---
 

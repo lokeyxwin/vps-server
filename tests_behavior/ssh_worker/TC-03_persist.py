@@ -3,7 +3,7 @@
 [用例描述 —— DO NOT MODIFY]
 ========================================================================
 
-TC-03 SSHWorker._入库派任务 行为单测 (spec v4)
+TC-03 SSHWorker._persist_and_dispatch 行为单测 (spec v4)
 
 故事:
   SSHWorker 路线 B 步骤 ④: 写 vps_record + 建 vps_task 入库.
@@ -15,7 +15,7 @@ TC-03 SSHWorker._入库派任务 行为单测 (spec v4)
     - 返回 dict 不含 xray_version 字段
 
 测试矩阵 (7 TC):
-  TC-03-a 调用 _入库派任务 → DB 多一条 VPSRecord + 一条 VPSTask(PENDING)
+  TC-03-a 调用 _persist_and_dispatch → DB 多一条 VPSRecord + 一条 VPSTask(PENDING)
   TC-03-b 返回 dict 含 vps_id/task_id/stage/os_name/os_version
   TC-03-c password 落盘加密 (原生 SQL 查 password_encrypted 不含明文)
   TC-03-d __repr__ 不输出密码
@@ -83,7 +83,7 @@ class TestSSHWorkerPersist(unittest.TestCase):
 
     # ---------- TC-03-a ----------
     def test_tc03a_creates_vps_and_task(self):
-        result = self.worker._入库派任务(
+        result = self.worker._persist_and_dispatch(
             ip="1.2.3.4", user="root", pwd="secret", port=22,
             ed=None, provider="aliyun.com",
             os_name="CentOS Linux", os_version="7",
@@ -100,7 +100,7 @@ class TestSSHWorkerPersist(unittest.TestCase):
 
     # ---------- TC-03-b ----------
     def test_tc03b_returns_expected_dict(self):
-        result = self.worker._入库派任务(
+        result = self.worker._persist_and_dispatch(
             ip="1.2.3.4", user="root", pwd="secret", port=22,
             ed=None, provider="",
             os_name="CentOS Linux", os_version="7",
@@ -116,7 +116,7 @@ class TestSSHWorkerPersist(unittest.TestCase):
 
     # ---------- TC-03-c ----------
     def test_tc03c_password_encrypted_in_storage(self):
-        self.worker._入库派任务(
+        self.worker._persist_and_dispatch(
             ip="1.2.3.4", user="root", pwd="MySecret_PlainPwd_123", port=22,
             ed=None, provider="",
             os_name="x", os_version="y",
@@ -131,7 +131,7 @@ class TestSSHWorkerPersist(unittest.TestCase):
 
     # ---------- TC-03-d ----------
     def test_tc03d_repr_no_password(self):
-        self.worker._入库派任务(
+        self.worker._persist_and_dispatch(
             ip="1.2.3.4", user="root", pwd="MySecret_PlainPwd_123", port=22,
             ed=None, provider="",
             os_name="x", os_version="y",
@@ -144,7 +144,7 @@ class TestSSHWorkerPersist(unittest.TestCase):
 
     # ---------- TC-03-e ⭐ 防回退 ----------
     def test_tc03e_regression_xray_version_empty_and_no_stage_message_column(self):
-        self.worker._入库派任务(
+        self.worker._persist_and_dispatch(
             ip="1.2.3.4", user="root", pwd="p", port=22,
             ed=None, provider="",
             os_name="x", os_version="y",
@@ -161,7 +161,7 @@ class TestSSHWorkerPersist(unittest.TestCase):
 
     # ---------- TC-03-f ----------
     def test_tc03f_ed_none_is_ok(self):
-        result = self.worker._入库派任务(
+        result = self.worker._persist_and_dispatch(
             ip="1.2.3.4", user="root", pwd="p", port=22,
             ed=None, provider="aliyun.com",
             os_name="x", os_version="y",
@@ -172,7 +172,7 @@ class TestSSHWorkerPersist(unittest.TestCase):
 
     # ---------- TC-03-g ----------
     def test_tc03g_empty_provider_is_ok(self):
-        result = self.worker._入库派任务(
+        result = self.worker._persist_and_dispatch(
             ip="1.2.3.4", user="root", pwd="p", port=22,
             ed=None, provider="",
             os_name="x", os_version="y",

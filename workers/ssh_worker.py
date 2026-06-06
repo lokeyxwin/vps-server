@@ -13,7 +13,7 @@
   - db.models (VPSRecord / VPSTask 等)
 
 我的私有编排方法(下划线开头):
-  - _查重 _敲门看一眼 _入库派任务 _失败路径处理
+  - _lookup_existing _probe_ssh _persist_and_dispatch _handle_failure
 
 我返回的 status 集:
   - already_registered (DB 已有这台)
@@ -89,16 +89,77 @@ class SSHWorker:
         ed=None,
         provider: str = "",
     ) -> dict:
-        """敲门 + 入库 + 派活儿,主流程.
+        """敲门 + 入库 + 派活儿,主流程 (spec v4 §3 三条主路线 A/B/C).
 
-        见 spec.md §3 三条主路线.
-        返回 dict 含 status + 其他业务字段.
+        编排 4 个私有方法, 自身不直接调 VPSSession / DB / XrayManager.
+        返回 dict 含 status + 其他业务字段, 5 种 status:
+          - already_registered (路线 A: DB 已有, 不打 SSH)
+          - queued             (路线 B: 新登记 + 入库 + 派任务成功)
+          - auth_failed        (路线 C: 密码错, 不入库)
+          - ssh_timeout        (路线 C: 超时, 不入库)
+          - ssh_refused        (路线 C: 拒接, 不入库)
+          - ssh_failed         (路线 C: 兜底, 不入库)
         """
-        pass    # 实现等 T-05 任务单填
+        # ---- 路线 A: DB 已有 ----
+        existing = self._lookup_existing(ip)
+        if existing is not None:
+            logger.info("process: ip=%s → 已登记, 路线 A 短路", ip)
+            return {
+                "status": "already_registered",
+                "vps": existing,
+            }
+
+        # ---- DB 没有 → 探测 ----
+        probe = self._probe_ssh(ip, user, pwd, port)
+
+        if not probe["ok"]:
+            # ---- 路线 C: SSH 失败 → 抛回不入库 ----
+            logger.info(
+                "process: ip=%s → 路线 C 失败 error_type=%s",
+                ip, probe["error_type"],
+            )
+            return self._handle_failure(
+                error_type=probe["error_type"],
+                error_message=probe["error_message"],
+                port=port,
+            )
+
+        # ---- 路线 B: 探测成功 → 入库 + 派任务 ----
+        # v4 关键: 不传 xray_version (_persist_and_dispatch 已删此参数)
+        result = self._persist_and_dispatch(
+            ip=ip,
+            user=user,
+            pwd=pwd,
+            port=port,
+            ed=ed,
+            provider=provider,
+            os_name=probe["os_name"],
+            os_version=probe["os_version"],
+        )
+        logger.info(
+            "process: ip=%s → 路线 B 入库 vps_id=%s task_id=%s",
+            ip, result["vps_id"], result["task_id"],
+        )
+        return {
+            "status": "queued",
+            "task_id": result["task_id"],
+            "vps_id": result["vps_id"],
+            "vps": {
+                "ip": ip,
+                "stage": VPSStage.CONNECTABLE,
+                "xray_version": "",  # v4 §5 不变量: SSHWorker 永远写空
+                "os_name": probe["os_name"],
+                "os_version": probe["os_version"],
+            },
+            "message": (
+                "已确认账密 OK,已入库;后台 worker 会接手装 xray"
+            ),
+        }
 
     # ============ 工人私有的小工具(下划线开头) ============
 
-    def _查重(self, ip: str) -> dict | None:
+    @staticmethod
+    def _lookup_existing(ip: str) -> dict | None:
         """看 vps_record 表有没有这个 ip.
 
         命中 → 返回打包好的现状 dict(含关联活跃 task 或最近 task 的 last_error_*).
@@ -174,7 +235,8 @@ class SSHWorker:
                 "last_error_msg": last_error_msg,
             }
 
-    def _敲门看一眼(self, ip: str, user: str, pwd: str, port: int) -> dict:
+    @staticmethod
+    def _probe_ssh(ip: str, user: str, pwd: str, port: int) -> dict:
         """SSH 探测 + 顺手采集 OS (spec v4 §3 路线 B 步骤①②③).
 
         ⚠️ v4 不查任何 xray 信息, 绝不调用 XrayManager.
@@ -196,7 +258,7 @@ class SSHWorker:
                     os_version = info.get("os_version", "")
                 except Exception as exc:  # noqa: BLE001 — 读 OS 失败留空, 不影响 ok
                     logger.warning(
-                        "_敲门看一眼: ip=%s get_system_info failed (%s), os 留空",
+                        "_probe_ssh: ip=%s get_system_info failed (%s), os 留空",
                         ip, exc,
                     )
                     os_name = ""
@@ -209,7 +271,7 @@ class SSHWorker:
                     "error_message": "",
                 }
         except AuthFailedError as exc:
-            logger.info("_敲门看一眼: ip=%s → auth_failed", ip)
+            logger.info("_probe_ssh: ip=%s → auth_failed", ip)
             return {
                 "ok": False,
                 "os_name": "",
@@ -218,7 +280,7 @@ class SSHWorker:
                 "error_message": str(exc) or _AUTH_FAILED_MESSAGE,
             }
         except ConnectTimeoutError as exc:
-            logger.info("_敲门看一眼: ip=%s port=%s → timeout", ip, port)
+            logger.info("_probe_ssh: ip=%s port=%s → timeout", ip, port)
             return {
                 "ok": False,
                 "os_name": "",
@@ -227,7 +289,7 @@ class SSHWorker:
                 "error_message": str(exc) or _build_timeout_message(port),
             }
         except ConnectRefusedError as exc:
-            logger.info("_敲门看一眼: ip=%s port=%s → refused", ip, port)
+            logger.info("_probe_ssh: ip=%s port=%s → refused", ip, port)
             return {
                 "ok": False,
                 "os_name": "",
@@ -236,7 +298,7 @@ class SSHWorker:
                 "error_message": str(exc) or _build_refused_message(port),
             }
         except Exception as exc:  # noqa: BLE001 — SSH 兜底, 转 failed status
-            logger.warning("_敲门看一眼: ip=%s → failed (%s: %s)", ip, type(exc).__name__, exc)
+            logger.warning("_probe_ssh: ip=%s → failed (%s: %s)", ip, type(exc).__name__, exc)
             return {
                 "ok": False,
                 "os_name": "",
@@ -245,8 +307,8 @@ class SSHWorker:
                 "error_message": str(exc),
             }
 
-    def _入库派任务(
-        self,
+    @staticmethod
+    def _persist_and_dispatch(
         ip: str,
         user: str,
         pwd: str,
@@ -295,23 +357,21 @@ class SSHWorker:
                 "os_version": os_version,
             }
             logger.info(
-                "_入库派任务: ip=%s → vps_id=%s task_id=%s stage=connectable",
+                "_persist_and_dispatch: ip=%s → vps_id=%s task_id=%s stage=connectable",
                 ip, rec.id, task.id,
             )
             return result
 
-    def _失败路径处理(
-        self,
+    @staticmethod
+    def _handle_failure(
         error_type: str,
         error_message: str,
-        ip: str | None = None,
-        user: str | None = None,
         port: int | None = None,
     ) -> dict:
         """SSH 失败时分场景抛回 (spec v4 §3 路线 C + §5 不变量).
 
         ⚠️ v4 大改: 全部抛回, **永远不入库**.
-        不熔断, 不再重试 (重试已在 _敲门看一眼 内部 connect_with_retry 走完).
+        不熔断, 不再重试 (重试已在 _probe_ssh 内部 connect_with_retry 走完).
 
         返回 dict: {status, message}. **绝不写 DB**.
         """

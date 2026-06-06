@@ -3,11 +3,11 @@
 [用例描述 —— DO NOT MODIFY]
 ========================================================================
 
-TC-01 SSHWorker._查重 行为单测 (spec v4)
+TC-01 SSHWorker._lookup_existing 行为单测 (spec v4)
 
 故事:
   SSHWorker 路线 A: DB 已有这台 VPS 时不打 SSH, 直接查表打包返回.
-  _查重 负责 SQL SELECT + 组装返回 dict.
+  _lookup_existing 负责 SQL SELECT + 组装返回 dict.
 
   spec v4 关键变化:
     - 删 stage_message 字段 (错误住任务表)
@@ -110,12 +110,12 @@ class TestSSHWorkerQueryExisting(unittest.TestCase):
 
     # ---------- TC-01-a ----------
     def test_tc01a_empty_db_returns_none(self):
-        self.assertIsNone(self.worker._查重("1.2.3.4"))
+        self.assertIsNone(self.worker._lookup_existing("1.2.3.4"))
 
     # ---------- TC-01-b ----------
     def test_tc01b_hit_with_no_task(self):
         self._insert_vps("1.2.3.4")
-        result = self.worker._查重("1.2.3.4")
+        result = self.worker._lookup_existing("1.2.3.4")
         self.assertIsNotNone(result)
         # 完整字段
         self.assertEqual(result["ip"], "1.2.3.4")
@@ -136,7 +136,7 @@ class TestSSHWorkerQueryExisting(unittest.TestCase):
             vps_id, TaskStatus.PENDING,
             last_error_code="", last_error_msg="",
         )
-        result = self.worker._查重("1.2.3.4")
+        result = self.worker._lookup_existing("1.2.3.4")
         self.assertIsNotNone(result["active_task"])
         at = result["active_task"]
         self.assertEqual(at["task_id"], task_id)
@@ -150,7 +150,7 @@ class TestSSHWorkerQueryExisting(unittest.TestCase):
     def test_tc01d_done_task_not_active(self):
         vps_id = self._insert_vps("1.2.3.4")
         self._insert_task(vps_id, TaskStatus.DONE)
-        result = self.worker._查重("1.2.3.4")
+        result = self.worker._lookup_existing("1.2.3.4")
         self.assertIsNone(result["active_task"])
 
     # ---------- TC-01-e ----------
@@ -161,7 +161,7 @@ class TestSSHWorkerQueryExisting(unittest.TestCase):
             last_error_code="install_xray_failed",
             last_error_msg="github.com 拉取超时",
         )
-        result = self.worker._查重("1.2.3.4")
+        result = self.worker._lookup_existing("1.2.3.4")
         # failed 不算活跃
         self.assertIsNone(result["active_task"])
         # 但最近 task 的错误信息要带回
@@ -175,7 +175,7 @@ class TestSSHWorkerQueryExisting(unittest.TestCase):
         # SQLite CURRENT_TIMESTAMP 精度秒,确保 created_at 区分得开
         time.sleep(1.1)
         second_id = self._insert_task(vps_id, TaskStatus.IN_PROGRESS)
-        result = self.worker._查重("1.2.3.4")
+        result = self.worker._lookup_existing("1.2.3.4")
         self.assertIsNotNone(result["active_task"])
         # 最近一条是 IN_PROGRESS
         self.assertEqual(result["active_task"]["task_id"], second_id)
@@ -187,7 +187,7 @@ class TestSSHWorkerQueryExisting(unittest.TestCase):
     def test_tc01g_regression_no_stage_message_field(self):
         """spec v4 删 stage_message: 返回 dict 不应有这个字段."""
         self._insert_vps("1.2.3.4")
-        result = self.worker._查重("1.2.3.4")
+        result = self.worker._lookup_existing("1.2.3.4")
         self.assertNotIn("stage_message", result)
 
 

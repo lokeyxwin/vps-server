@@ -3,11 +3,11 @@
 [用例描述 —— DO NOT MODIFY]
 ========================================================================
 
-TC-02 SSHWorker._敲门看一眼 行为单测 (spec v4)
+TC-02 SSHWorker._probe_ssh 行为单测 (spec v4)
 
 故事:
   SSHWorker 路线 B 步骤 ①②③: SSH 探测 + 顺手采集 OS, 不查 xray.
-  _敲门看一眼 用 VPSSession with 包起来用完即关, 返回 ok/os_*/error_*.
+  _probe_ssh 用 VPSSession with 包起来用完即关, 返回 ok/os_*/error_*.
 
   spec v4 关键变化:
     - 删 xray_version 字段 (SSHWorker 不查 xray)
@@ -72,7 +72,7 @@ class TestSSHWorkerProbeSSH(unittest.TestCase):
         ctx.__exit__.return_value = False
 
         with patch("workers.ssh_worker.VPSSession", return_value=ctx):
-            result = self.worker._敲门看一眼("1.2.3.4", "root", "p", 22)
+            result = self.worker._probe_ssh("1.2.3.4", "root", "p", 22)
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["os_name"], "CentOS Linux")
@@ -87,7 +87,7 @@ class TestSSHWorkerProbeSSH(unittest.TestCase):
         ctx.__enter__.side_effect = AuthFailedError("认证失败")
         ctx.__exit__.return_value = False
         with patch("workers.ssh_worker.VPSSession", return_value=ctx):
-            result = self.worker._敲门看一眼("1.2.3.4", "root", "p", 22)
+            result = self.worker._probe_ssh("1.2.3.4", "root", "p", 22)
         self.assertFalse(result["ok"])
         self.assertEqual(result["error_type"], "auth_failed")
         self.assertNotEqual(result["error_message"], "")
@@ -100,7 +100,7 @@ class TestSSHWorkerProbeSSH(unittest.TestCase):
         ctx.__enter__.side_effect = ConnectTimeoutError("超时")
         ctx.__exit__.return_value = False
         with patch("workers.ssh_worker.VPSSession", return_value=ctx):
-            result = self.worker._敲门看一眼("1.2.3.4", "root", "p", 22)
+            result = self.worker._probe_ssh("1.2.3.4", "root", "p", 22)
         self.assertFalse(result["ok"])
         self.assertEqual(result["error_type"], "timeout")
         self.assertNotEqual(result["error_message"], "")
@@ -111,7 +111,7 @@ class TestSSHWorkerProbeSSH(unittest.TestCase):
         ctx.__enter__.side_effect = ConnectRefusedError("拒接")
         ctx.__exit__.return_value = False
         with patch("workers.ssh_worker.VPSSession", return_value=ctx):
-            result = self.worker._敲门看一眼("1.2.3.4", "root", "p", 22)
+            result = self.worker._probe_ssh("1.2.3.4", "root", "p", 22)
         self.assertFalse(result["ok"])
         self.assertEqual(result["error_type"], "refused")
         self.assertNotEqual(result["error_message"], "")
@@ -122,7 +122,7 @@ class TestSSHWorkerProbeSSH(unittest.TestCase):
         ctx.__enter__.side_effect = ConnectionError("未知")
         ctx.__exit__.return_value = False
         with patch("workers.ssh_worker.VPSSession", return_value=ctx):
-            result = self.worker._敲门看一眼("1.2.3.4", "root", "p", 22)
+            result = self.worker._probe_ssh("1.2.3.4", "root", "p", 22)
         self.assertFalse(result["ok"])
         self.assertEqual(result["error_type"], "failed")
 
@@ -132,7 +132,7 @@ class TestSSHWorkerProbeSSH(unittest.TestCase):
 
         2 条断言:
           ① workers.ssh_worker 模块不应 import XrayManager (顶层 namespace 没这名字)
-          ② _敲门看一眼 期间不实例化 XrayManager (即便偷偷 import 也要触发不到)
+          ② _probe_ssh 期间不实例化 XrayManager (即便偷偷 import 也要触发不到)
         """
         import workers.ssh_worker as ssh_worker_mod
 
@@ -142,7 +142,7 @@ class TestSSHWorkerProbeSSH(unittest.TestCase):
             "workers.ssh_worker 不应 import XrayManager (spec v4 §4)",
         )
 
-        # ② 即便我们 patch 一个假 XrayManager 进去, _敲门看一眼 也不应碰它
+        # ② 即便我们 patch 一个假 XrayManager 进去, _probe_ssh 也不应碰它
         fake_xm_class = MagicMock()
         with patch.object(
             ssh_worker_mod, "XrayManager", fake_xm_class, create=True
@@ -155,7 +155,7 @@ class TestSSHWorkerProbeSSH(unittest.TestCase):
             ctx.__enter__.return_value = fake_session
             ctx.__exit__.return_value = False
             with patch("workers.ssh_worker.VPSSession", return_value=ctx):
-                self.worker._敲门看一眼("1.2.3.4", "root", "p", 22)
+                self.worker._probe_ssh("1.2.3.4", "root", "p", 22)
             fake_xm_class.assert_not_called()
 
     # ---------- TC-02-g ----------
@@ -167,7 +167,7 @@ class TestSSHWorkerProbeSSH(unittest.TestCase):
         ctx.__enter__.return_value = fake_session
         ctx.__exit__.return_value = False
         with patch("workers.ssh_worker.VPSSession", return_value=ctx):
-            result = self.worker._敲门看一眼("1.2.3.4", "root", "p", 22)
+            result = self.worker._probe_ssh("1.2.3.4", "root", "p", 22)
         self.assertTrue(result["ok"])
         self.assertEqual(result["os_name"], "")
         self.assertEqual(result["os_version"], "")
