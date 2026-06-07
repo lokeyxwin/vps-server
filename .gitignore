@@ -34,3 +34,6 @@ htmlcov/
 
 # 个人 issue / 笔记 / 复盘等私有文档，不进库避免污染主线 git log
 issue/
+
+# 临时 smoke 验证脚本(可能 hardcode 凭据, 跑完即删)
+dev_smoke_*.py
