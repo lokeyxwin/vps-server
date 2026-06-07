@@ -44,7 +44,6 @@ VPS 模块已闭环。**IP 业务是接下来的工作**（流程 + 实现见 [t
 | legacy 位置 | 怎么用 | 绝不 |
 |------------|--------|------|
 | `services/`（旧业务编排层） | 打开看思路、必要时 cp 片段到 `workers/` | **`from services import` 直接导入** |
-| `test/`（旧测试） | 打开看 mock 模式、必要时 cp 用例 | 新测试**全部**住 `tests_behavior/<worker>/`，不在旧 `test/` 加新文件 |
 | `xray/service.py` + `xray/config.py`（旧函数） | 打开看实现思路 | **`from xray.service/config import` 直接导入**——新方法全部直接写在 `xray/manager.py::XrayManager` 类里 |
 
 新代码 + 真机验证完工后，旧 `services/` 整体删除，本节也随之失效。
@@ -392,7 +391,7 @@ core/                       ← 通用底层(已有,不动)
 ├── session.py              ← VPSSession 类(SSH 会话包装,有状态用类)
 ├── geoip.py / security.py 等纯函数
 
-tests_behavior/<worker>/spec.md  ← 行为规约(验收标准金标准,single source of truth)
+test/<worker>/spec.md  ← 行为规约(验收标准金标准,single source of truth)
 tools/                      ← MCP 协议适配层(已存在,不变)
 services/                   ← 旧业务层,保留作对照,新代码不 import
 proxy/  db/                 ← 不动

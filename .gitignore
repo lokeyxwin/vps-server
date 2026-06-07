@@ -37,3 +37,12 @@ issue/
 
 # 临时 smoke 验证脚本(可能 hardcode 凭据, 跑完即删)
 dev_smoke_*.py
+
+# 备份/封存文件（本地参考，不进库）
+test.bak/
+*.bak
+*.bak-*
+
+# Claude Code 本地配置 / hook 运行态
+.claude/settings.local.json
+.claude/hook-state/
