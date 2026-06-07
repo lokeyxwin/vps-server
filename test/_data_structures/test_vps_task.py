@@ -33,7 +33,7 @@ TC-SCHEMA-VPSTASK VPSTask 异步任务表 + TaskStatus 4 值（v4）
 
 不应发生:
   - 任何写库动作落到 db/vps_server.db (用独立 in-memory engine)
-  - import services/* 或旧 test/*
+  - import services/*
 ========================================================================
 """
 

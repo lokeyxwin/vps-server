@@ -28,7 +28,7 @@ TC-SCHEMA-VPS-v4 VPSRecord schema v4 重塑
 
 不应发生:
   - 任何写库动作落到 db/vps_server.db (用独立 in-memory engine)
-  - import services/* 或旧 test/*
+  - import services/*
 ========================================================================
 """
 
@@ -230,7 +230,5 @@ if __name__ == "__main__":
 # 偏差：
 #   - 测试用独立 in-memory SQLite engine + 自建 sessionmaker，
 #     不复用 db.session.SessionLocal（避免污染 dev DB）。
-#     旧 test/test_vps_model.py 复用了 SessionLocal——这条是新约定，
-#     新 tests_behavior 一律 in-memory 自管。
 # 待用户决策事项：无
 # ========================================================================

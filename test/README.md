@@ -1,12 +1,11 @@
-# tests_behavior/ —— 新代码的行为测试
+# test/ —— 行为规约与行为测试
 
-跟旧 `test/` 区分：旧 `test/` 是 legacy 单元测试，沉淀在那不动；
-新代码（`workers/` + `xray/manager.py`）的所有测试都进这里。
+这里保存当前项目的行为规约和行为测试。实现 agent 读这里来确认模块应该达到什么行为。
 
 ## 目录组织：按工人分
 
 ```
-tests_behavior/
+test/
 ├── ssh_worker/              ← SSHWorker 行为测试
 ├── xray_worker/             ← XrayWorker 行为测试
 ├── ip_probe_worker/         ← IPProbeWorker 行为测试
@@ -79,7 +78,7 @@ TC-SSH-01 SSHWorker 敲开新机器（账密对、xray 未装）
 
 ## 测试隔离套路：`session_scope` patch（每个 worker TC 都用得到）
 
-新代码里 worker 用 `db.session.session_scope` 上下文管理器拿 SQLAlchemy session。
+worker 用 `db.session.session_scope` 上下文管理器拿 SQLAlchemy session。
 测试时需要把它指到独立 in-memory SQLite，避免:
 - 污染本地 dev DB
 - 测试之间互相串行依赖

@@ -22,8 +22,6 @@
 | `services/`（旧业务编排层：vps_register / vps_init / ip_register） | 只打开看思路、必要时 cp 片段到 `workers/ssh_worker.py` |
 | 旧 `main.py` / 旧 rgvps 入口脚本 | 同上，只参考实现思路 |
 | `xray/service.py` + `xray/config.py`（旧函数） | 只参考思路；XrayWorker 那边新方法全写在 `xray/manager.py::XrayManager` 类里 |
-| `test/`（旧测试） | 只参考 mock 模式；**新测试一律住 `tests_behavior/ssh_worker/`** |
-
 详见 `CLAUDE.local.md` §0 legacy 代码姿势表。
 
 ### 2. 工具优先复用，缺了实现者直接造
