@@ -132,10 +132,7 @@ def register_ip(
 
             # ④ 算端口：只查 proxy_record（不 SSH 跑 ss -tln，proxy_record 是真相源）
             used_ports = _proxy_used_ports(vps_id)
-            all_ports = set(range(
-                project_config.PROXY_PORT_RANGE_START,
-                project_config.PROXY_PORT_RANGE_END + 1,
-            ))
+            all_ports = set(range(18441, 18451))
             available = all_ports - used_ports
             logger.info(
                 "端口审计（只查 proxy_record）：已用 %s 真闲 %d 个 %s",

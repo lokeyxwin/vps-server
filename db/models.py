@@ -163,7 +163,7 @@ class ProxyRecord(Base):
         ForeignKey("vps_record.id", ondelete="RESTRICT"),
         nullable=False, index=True,
     )
-    # VPS 上对外的端口（业务层约束在 PROXY_PORT_RANGE_START..END）
+    # VPS 上对外的端口（高位随机，避开 EXCLUDED_PORTS；纳管端口原样接管）
     vps_port: Mapped[int] = mapped_column(Integer, nullable=False)
 
     # rgIP 业务新增的 binding 必填；rgvps 端口审计从 xray config 反推的 binding 暂时填 None

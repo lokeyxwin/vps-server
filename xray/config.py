@@ -75,7 +75,7 @@ UNSUPPORTED_PROTOCOL_MESSAGE = (
 
 PORT_CONFLICTS_WITH_DEFAULT_MESSAGE = (
     "客户端入站端口与 xray 默认直出端口冲突。"
-    "rgIP 业务的端口应从 PROXY_PORT_RANGE_START..END 范围（默认 18441-18450）挑选；"
+    "rgIP 业务的端口应从高位段（避开 EXCLUDED_PORTS）随机挑选；"
     "默认端口 18440 给 VPS 自用直出（default-direct），不能被客户端 inbound 占用。"
 )
 

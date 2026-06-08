@@ -16,7 +16,7 @@ from log import get_logger
 logger = get_logger(__name__)
 
 
-DEFAULT_TEST_URL = config.CONNECTIVITY_TEST_URL
+DEFAULT_TEST_URL = "https://api.ipify.org"
 DEFAULT_TIMEOUT = config.CONNECTIVITY_TEST_TIMEOUT
 
 EXTERNAL_UNREACHABLE_MESSAGE = (

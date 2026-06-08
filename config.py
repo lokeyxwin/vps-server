@@ -34,32 +34,31 @@ ENCRYPTION_KEY = os.environ.get("ENCRYPTION_KEY", "")
 # 数据库配置
 # ============================================================
 
-# 切换开关：开发/测试用 "sqlite"，生产改为 "mysql"
-DB_TYPE = os.environ.get("DB_TYPE", "sqlite")
+# 切换开关：开发/测试改 "sqlite"，生产改 "mysql"
+DB_TYPE = "sqlite"
 
-# SQLite 配置（开发/测试）
-# 测试隔离：跑测试时 conftest.py 或测试 entry 设置 VPS_SERVER_TESTING=1，
-# 切到独立的测试 DB（vps_server_test.db），不污染 dev 数据
+# SQLite（开发/测试）
+# 跑 pytest 时设环境变量 VPS_SERVER_TESTING=1 切独立测试 DB，不污染 dev 数据
 _TESTING = os.environ.get("VPS_SERVER_TESTING", "").lower() in {"1", "true", "yes"}
 _DB_FILENAME = "vps_server_test.db" if _TESTING else "vps_server.db"
 SQLITE_PATH = PROJECT_ROOT / "db" / _DB_FILENAME
 SQLITE_URL = f"sqlite:///{SQLITE_PATH}"
 
-# MySQL 配置（生产）—— 通过环境变量注入凭证，避免硬编码
-MYSQL_HOST = os.environ.get("MYSQL_HOST", "127.0.0.1")
-MYSQL_PORT = int(os.environ.get("MYSQL_PORT", "3306"))
-MYSQL_USER = os.environ.get("MYSQL_USER", "root")
+# MySQL（生产）—— 仅密码留 env，避免明文进 git
+MYSQL_HOST = "127.0.0.1"
+MYSQL_PORT = 3306
+MYSQL_USER = "root"
 MYSQL_PASSWORD = os.environ.get("MYSQL_PASSWORD", "")
-MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE", "vps_server")
+MYSQL_DATABASE = "vps_server"
 MYSQL_URL = (
     f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}"
     f"@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}?charset=utf8mb4"
 )
 
-# 引擎额外参数
-DB_ECHO = os.environ.get("DB_ECHO", "false").lower() == "true"  # 是否打印 SQL
-DB_POOL_SIZE = int(os.environ.get("DB_POOL_SIZE", "5"))
-DB_POOL_RECYCLE = 3600  # 连接 1 小时后回收（MySQL 默认 8 小时断连，提前回收）
+# 引擎参数
+DB_ECHO = False
+DB_POOL_SIZE = 5
+DB_POOL_RECYCLE = 3600  # MySQL 默认 8 小时断连，提前 1 小时回收
 
 
 # ============================================================
@@ -82,49 +81,20 @@ SSH_CONNECT_RETRY_BACKOFF = (2.0, 5.0)
 
 
 # ============================================================
-# xray 相关常量
+# xray
 # ============================================================
 
-# VPS 自身代理端口（默认 xray 入站，freedom 直出）
+# VPS 自身默认 xray 入站端口（socks5 → freedom 直出，被 ADR-0004 让步算法保护）
 XRAY_DEFAULT_PORT = 18440
 
-# xray 安装脚本超时（GitHub 拉取，国内可能慢）
-XRAY_INSTALL_TIMEOUT = 120
-
 
 # ============================================================
-# Proxy 业务端口范围
+# 连通性测试 / GeoIP（API URL 已 inline 到调用处，这里只留可调超时 + token）
 # ============================================================
 
-# DEPRECATED: 旧"18441-18450 业务段"规则已被 ADR-0002 取消。
-# 新代码用 EXCLUDED_PORTS + 高位随机 + 纳管端口原样接管。
-# 下面 4 个常量仅供旧 services/* 引用，新 workers/* 不要用。
-# Proxy 业务部署的代理出口端口范围（每台 VPS 最多 10 个出口）
-PROXY_PORT_RANGE_START = 18441
-PROXY_PORT_RANGE_END = 18450
-
-# 服务器本地防火墙开放范围：覆盖 xray 默认端口 + Proxy 业务范围
-FIREWALL_OPEN_START = 18440
-FIREWALL_OPEN_END = 18450
-
-
-# ============================================================
-# 连通性测试
-# ============================================================
-
-# 返回出口 IP 的探测 URL（用于内部 / 外部 socks5 ping）
-CONNECTIVITY_TEST_URL = "https://api.ipify.org"
-# socks5 over 跨境慢链路（如本机→HK/SG VPS→Cloudflare）单 RTT 就要 3-5 秒，
-# 8 秒预算容易卡在握手阶段。20 秒覆盖典型慢链路 + 留点裕量
+# socks5 over 跨境慢链路单 RTT 就要 3-5 秒，20 秒覆盖典型慢链路 + 留点裕量
 CONNECTIVITY_TEST_TIMEOUT = 20
 
-
-# ============================================================
-# GeoIP（IP 归属地查询）
-# ============================================================
-
 # ipinfo.io 免费 50k 次/月（注册 token 后），无 token 也能查但限额很小
-# rgIP 业务在登记 IP 时调一次，用于把权威国家/城市信息写入 ip_record
-IPINFO_API_URL = "https://ipinfo.io/{ip}"
 IPINFO_TOKEN = os.environ.get("IPINFO_TOKEN", "")
 IPINFO_TIMEOUT = 8

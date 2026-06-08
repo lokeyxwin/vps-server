@@ -22,8 +22,8 @@ UNINSTALL_COMMAND = (
     'bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove --purge'
 )
 
-# 装机超时（GitHub 拉取，国内可能慢）。从 config 取，方便运维统一调
-INSTALL_TIMEOUT = config.XRAY_INSTALL_TIMEOUT
+# 装机超时（GitHub 拉取，国内可能慢）
+INSTALL_TIMEOUT = 120
 
 
 # 默认 config 相关常量 + 构造 / 上传 / 校验函数已搬到 xray/config.py。
@@ -254,7 +254,7 @@ def reload(client: paramiko.SSHClient) -> None:
 def test_internal_socks(
     client: paramiko.SSHClient,
     port: int = config.XRAY_DEFAULT_PORT,
-    test_url: str = config.CONNECTIVITY_TEST_URL,
+    test_url: str = "https://api.ipify.org",
     timeout: int = config.CONNECTIVITY_TEST_TIMEOUT,
     user: str = "",
     pwd: str = "",

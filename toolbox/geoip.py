@@ -77,7 +77,7 @@ def lookup_egress(ip: str) -> dict:
         logger.warning("lookup_egress: ip='' → empty (caller passed empty IP)")
         return _empty_result("empty input")
 
-    url = config.IPINFO_API_URL.format(ip=ip)
+    url = f"https://ipinfo.io/{ip}"
     params = {}
     if config.IPINFO_TOKEN:
         params["token"] = config.IPINFO_TOKEN

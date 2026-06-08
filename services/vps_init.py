@@ -23,11 +23,6 @@ from xray import (
 )
 
 
-# 防火墙开放范围从 config 取（XRAY_DEFAULT_PORT 18440 + PROXY 业务范围 18441-18450）
-FIREWALL_OPEN_START = config.FIREWALL_OPEN_START
-FIREWALL_OPEN_END = config.FIREWALL_OPEN_END
-
-
 logger = get_logger(__name__)
 
 
@@ -88,10 +83,7 @@ def init_vps_xray(ip: str) -> dict:
             #   c. 把可用端口数写到 VPS 表的 idle_port_count
             #   d. 每条 existing_binding 抄录到 proxy 表（schema 还没定，先 stub log）
             existing_bindings = manager.import_existing_bindings()
-            available_ports = vps.get_available_ports(
-                config.PROXY_PORT_RANGE_START,
-                config.PROXY_PORT_RANGE_END,
-            )
+            available_ports = vps.get_available_ports(18441, 18450)
             # 已绑定端口虽然在 ss -tln 里就会显示占用，这里冗余扣一次保险
             available_ports -= {b["port"] for b in existing_bindings}
 
@@ -101,9 +93,8 @@ def init_vps_xray(ip: str) -> dict:
                 "existing_bindings": existing_bindings,
             }
             logger.info(
-                "端口审计：业务端口区间内可用 %d/%d 个，已被 xray 绑定 %d 个，可用列表=%s",
+                "端口审计：业务端口区间内可用 %d/10 个，已被 xray 绑定 %d 个，可用列表=%s",
                 len(available_ports),
-                config.PROXY_PORT_RANGE_END - config.PROXY_PORT_RANGE_START + 1,
                 len(existing_bindings),
                 sorted(available_ports),
             )
@@ -124,12 +115,11 @@ def init_vps_xray(ip: str) -> dict:
                 )
 
             # ⑤.5 开服务器本地防火墙 18440-18450（best-effort，失败只警告不阻塞）
-            logger.info("处理服务器本地防火墙，放行端口范围 %d-%d", FIREWALL_OPEN_START, FIREWALL_OPEN_END)
+            logger.info("处理服务器本地防火墙，放行端口范围 18440-18450")
             try:
-                fw = open_tcp_port_range(vps.client, FIREWALL_OPEN_START, FIREWALL_OPEN_END)
+                fw = open_tcp_port_range(vps.client, 18440, 18450)
                 logger.info(
-                    "本机防火墙处理完毕：类型=%s 已尝试放行 %d-%d/tcp",
-                    fw, FIREWALL_OPEN_START, FIREWALL_OPEN_END,
+                    "本机防火墙处理完毕：类型=%s 已尝试放行 18440-18450/tcp", fw,
                 )
             except FirewallOpenError as exc:
                 logger.warning(
