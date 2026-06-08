@@ -25,6 +25,81 @@ from xray.service import (
 logger = get_logger(__name__)
 
 
+def _parse_outbounds_from_config(cfg: dict) -> list[dict]:
+    """从 xray config dict 抠出每条 inbound 关联的出口信息。
+
+    跟 xray.config.extract_port_bindings 的区别:
+      - 这里**包含**所有 inbound (含 default-direct), 因为直进直出条目也要返回
+        (XrayWorker 据此判断是否已有 socks5→freedom 默认入口)
+      - 加 outbound_protocol 字段 (freedom / socks / http / ...) 给纳管路径判定
+      - 把 inbound_protocol 也单独返回(用 xray 字面值, 比如 "socks")
+      - 把 outbound 的 server (upstream) 也单独抠 host/port/user/pwd
+
+    纯字典操作, 没 SSH 没 IO。
+    """
+    inbounds = cfg.get("inbounds", []) or []
+    outbounds = cfg.get("outbounds", []) or []
+    rules = (cfg.get("routing", {}) or {}).get("rules", []) or []
+
+    routing_map: dict[str, str] = {}
+    for rule in rules:
+        in_tags = rule.get("inboundTag", []) or []
+        out_tag = rule.get("outboundTag", "")
+        for tag in in_tags:
+            routing_map[tag] = out_tag
+
+    outbound_by_tag = {ob.get("tag", ""): ob for ob in outbounds}
+
+    result: list[dict] = []
+    for inb in inbounds:
+        tag = inb.get("tag", "")
+        port = inb.get("port", 0)
+        inbound_protocol = inb.get("protocol", "")
+
+        accounts = (inb.get("settings", {}) or {}).get("accounts", []) or []
+        if accounts:
+            inbound_user = accounts[0].get("user", "")
+            inbound_pwd = accounts[0].get("pass", "")
+        else:
+            inbound_user = ""
+            inbound_pwd = ""
+
+        out_tag = routing_map.get(tag, "")
+        outbound = outbound_by_tag.get(out_tag, {}) or {}
+        outbound_protocol = outbound.get("protocol", "")
+
+        servers = (outbound.get("settings", {}) or {}).get("servers", []) or []
+        first_server = servers[0] if servers else {}
+        upstream_host = first_server.get("address", "")
+        upstream_port = first_server.get("port", 0) or 0
+        server_users = first_server.get("users", []) or []
+        if server_users:
+            upstream_user = server_users[0].get("user", "")
+            upstream_pwd = server_users[0].get("pass", "")
+        else:
+            upstream_user = ""
+            upstream_pwd = ""
+
+        meta = outbound.get("_meta", {}) or {}
+        egress_ip = meta.get("egress_ip", "")
+        egress_country = meta.get("egress_country", "")
+
+        result.append({
+            "vps_port": port,
+            "inbound_protocol": inbound_protocol,
+            "inbound_user": inbound_user,
+            "inbound_pwd": inbound_pwd,
+            "outbound_protocol": outbound_protocol,
+            "upstream_host": upstream_host,
+            "upstream_port": upstream_port,
+            "upstream_user": upstream_user,
+            "upstream_pwd": upstream_pwd,
+            "egress_ip": egress_ip,
+            "egress_country": egress_country,
+        })
+    return result
+
+
 class XrayManager:
     """xray 在某一台 VPS 上的管理器。
 
@@ -125,10 +200,14 @@ class XrayManager:
             egress_country: str      出口国家 (同上,无则 "")
 
         字段命名细节见 test/xray_worker/spec.md v5 §4 + §二。
-
-        实现等任务单 T-07 填(可参考 xray.config.extract_port_bindings)。
         """
-        pass
+        if xc.is_config_blank(self.client):
+            return []
+        try:
+            cfg = xc.read_config(self.client)
+        except xc.ConfigReadError:
+            return []
+        return _parse_outbounds_from_config(cfg)
 
     def test_internal_socks(
         self, port: int = xc.DEFAULT_PORT, user: str = "", pwd: str = "",

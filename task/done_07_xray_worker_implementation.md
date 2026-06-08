@@ -1,4 +1,4 @@
-# T-07 XrayWorker 实现 (3 分支 + 统一收尾) — v2 对齐 spec v5 + ADR-0004
+# T-07 XrayWorker 实现 (3 分支 + 统一收尾) — v3 对齐 spec v5.1
 
 **ID**: T-07
 **前置依赖**:
@@ -8,6 +8,13 @@
 - T-08 (toolbox.proxy_check.test_internal / test_external 加好)
 **后续依赖**: 无 (这是 rgvps 链路装机端的核心)
 **复杂度**: 🔴 大(整个项目最复杂的工人)
+
+> **v3 变化**(2026-06-08 二修, 落 spec v5.1):
+> - 分支 A 装机后**在 `start()` 前补 `write_default_config()`**(裸装完 config 为空, start 会 exit=23)
+> - `toolbox.proxy_check.test_internal` 签名升 `-> tuple[bool, egress_ip]`(同步升级, 见 done_08 后续备忘)
+> - 纳管 `ip_record.egress_ip` 用内 ping 反推的真出口 IP(不再依赖 outbound `_meta.egress_ip`)
+> - `task.status` 严格按 `db/models.py::TaskStatus` 4 值真相: 失败回 `pending` + retry_count++, retry_count >= 5 升 `failed`(没有 `pending_retry` / `circuit_broken` 字面)
+> - `vps.default_inbound_port` schema 没此字段, 改用 tail_result 返回值表达, 不入库
 
 > **v2 变化**(2026-06-08, 落 ADR-0004 + spec v5):
 > - 分支 B/C 都加"看自启没设就设"前置步
@@ -453,3 +460,73 @@ mock 装机抛 RuntimeError。
 - xray 工具箱齐 (extract / is_enabled / add / remove / test_internal / test_external / lookup_egress)
 
 T-06 + T-07 都完工 = rgvps 端到端打通, agent 调 rgvps 立刻拿 task_id, XrayWorker 后台装机+纳管完毕, vps 升 running。
+
+---
+
+## 完工记录
+
+**完工时间**: 2026-06-08
+**实现窗口**: Claude (Opus 4.7)
+
+### 偏差与处置(已经用户裁定, 落 v3 + spec v5.1)
+
+实施时盘点 spec v5 / 任务单 v2 / `db/models.py` / 既有 toolbox 工具, 发现 4 处偏差, 全部跟用户对齐拍板:
+
+1. **`db/models.py::TaskStatus` 只 4 值** (v4 拍板), 但 spec v5 §7 / 任务单 v2 实现轮廓引用 `pending_retry` / `circuit_broken` —— 用户拍按 db 真相走: 失败回写 `pending` + retry_count++, retry_count >= 5 升 `failed`. spec.md §7 改 v5.1 修订表对齐.
+
+2. **`VPSRecord.default_inbound_port` 字段不存在** —— 用户拍不入库, 改用 tail_result 返回值表达, spec.md §4 加注.
+
+3. **纳管 IP 的 egress_ip 怎么填** —— 用户拍用内 ping 反推真出口 IP. toolbox `test_internal` 签名一刀切升级为 `-> tuple[bool, egress_ip: str]`(删孪生设计), done_08 加签名升级备忘.
+
+4. **分支 A 装完 start 前要不要 `write_default_config`** —— 用户拍允许补(spec v5 漏写, 裸装完 config 为空 systemctl start 会 exit=23). spec.md §3 v5.1 补步骤②.
+
+### 实际改动
+
+- `toolbox/proxy_check.py`: `test_internal` 签名 `-> bool` → `-> tuple[bool, str]`(内 ping 通时顺手返出口 IP); 删掉中途加的孪生 `test_internal_egress`.
+- `xray/manager.py`: `extract_existing_outbounds` 填真实现(纯字典操作, 抠出每条 inbound 关联出口含 outbound_protocol 字段, 空配置返 `[]`). 内部 `_parse_outbounds_from_config` 模块级私有函数, 单测不依赖 SSH.
+- `workers/xray_worker.py`: 完整实现 `XrayWorker` 类 + 让步算法 + `NoDefaultPortError`. 主流程: 抢锁 → 加载凭据 → SSH → 现状判断 A/B/C → 前置 → 统一收尾(读配置/分类/直进直出兜底/纳管或 remove/upload+validate+reload+验证) → mark_done. 失败分流: AuthFailedError/NoDefaultPortError 不可重试 → FAILED; 其他临时错 → PENDING + 退避 2^retry 分钟(上限 60), retry_count >= 5 → FAILED.
+- `test/xray_worker/__init__.py` 新建.
+- `test/xray_worker/TC-01 ~ TC-14`: 14 份测试文件(分支判断 / 前置 / 统一收尾各场景 / 让步算法 / 失败分流 / 熔断 / 真机占位).
+- `test/xray_worker/spec.md`: v5 → v5.1, §3 / §4 / §7 / §二 C / §三 多处修订.
+- `task/done_08_*.md`: 补"后续签名升级备忘"小节, 记录 `test_internal` 在 T-07 实施时被升签名.
+- `task/doing_07_*.md` → `done_07_*.md`: 顶部加 v3 变化说明 + 末尾完工记录.
+
+### 测试结果
+
+```
+VPS_SERVER_TESTING=1 uv run python -m unittest TC-01 TC-02 ... TC-14
+→ Ran 31 tests in 0.050s
+→ OK (skipped=1)   # TC-14 真机集成测默认 skip, 任务单 v2 已明标 "skip 算通过"
+```
+
+14 个 TC 文件 / 31 个 testcase 全过. TC-14 框架已建(env var 启动), 实际真机端到端走 dev_smoke.
+
+### 真机端到端验证(用户核对通过)
+
+跑 `dev_smoke_xray_worker.py`(不进 commit, gitignore 已挡), 凭据用户 2026-06-08 给:
+- VPS: `203.0.113.10` (sg dev 机)
+- 上游代理: `proxy.miluproxy.com:5001` 账密 `74a2b22f9K73s9 / 2750a32F`
+
+四阶段执行:
+1. SSH 进 VPS 写假纳管 config(inbound socks5 11080 账密 alice/wonderland → outbound socks miluproxy → routing) + upload + reload
+2. dev DB 写 vps_record + vps_task pending
+3. `XrayWorker().process_task(task_id=1)` 跑, 分支判定 C, 统一收尾纳管
+4. 落库结果:
+   - `ip_record`: egress_ip=`198.51.100.10` country_code=`SG` country_name=`Singapore` city=`Singapore` entry_host=`proxy.miluproxy.com` entry_port=`5001` expire_date=`NULL` is_active=`1` ✅
+   - `proxy_record`: vps_port=`11080` ip_id=`1` status=`using` egress_ip=`198.51.100.10` egress_country=`SG` ✅
+   - `vps_task`: status=`done` retry_count=`0` last_error_code=`""` ✅
+   - `vps_record`: stage=`running` xray_version=`Xray 26.3.27 (Xray, Penetrates Everything.) d2758a0 (go1.26.1 linux/amd64)` used_port_count=`1` ✅
+
+用户审完: **国家对**, 链路验证通过.
+
+### 未覆盖风险 / 已知限制
+
+- 共享 outbound 的所有 inbound **同时**配错账密时整组会被误判为"上游死了"全删 (ADR-0004 §5 已接受).
+- 让步算法降到 1024 仍占满时 task 直接 FAILED + 等人介入(罕见).
+- `xray/manager.py` 大量方法仍是 `xray/service.py` 薄包装(15 处转手), 不符合 ADR-0001 §3 的"新方法直接在类里写实现". 由 [[project-legacy_cleanup_pending]] 跟踪, 留待 T-07 + T-06 完工 + 真机验证后单独 legacy 大手术.
+- TC-14 真机集成测当前是占位 skip, 真链路靠 dev_smoke 跑过. 后续若 CI 想自动跑可写 service mock 或拉真 VPS sandbox(本次范围外).
+
+### 后续任务
+
+- T-06 `tools/rgvps` MCP 入口(同步段) — 拉通 rgvps 端到端
+- legacy 大手术(`xray/manager.py` 薄包装清理 + 删 `services/` + 删 `xray/service.py` / `xray/config.py` 中不再被引用的 atom)

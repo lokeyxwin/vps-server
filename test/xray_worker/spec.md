@@ -1,6 +1,6 @@
 # XrayWorker 行为规约（spec.md）
 
-**版本**: v5（2026-06-07）
+**版本**: v5.1（2026-06-08）
 **模块**: `workers/xray_worker.py`
 **类型**: 异步 task 工人
 **对应 ADR**:
@@ -58,10 +58,12 @@ UPDATE vps_task
 #### 分支 A: xray 未安装（`xray_version` 空 或 `is_installed()` False）
 
 1. `install()`
-2. `start()`
-3. `enable()`
-4. `version()` 验证版本号非空
-5. 进入统一收尾
+2. **如果 `is_config_blank()` 为 True → `write_default_config()`** ⭐ v5.1 补漏（裸装完 config 为空, 后续 `start()` 会 exit=23, 详见 [[xray.manager.ensure_installed_and_running]] 注释）
+3. `start()`
+4. `enable()`
+5. `version()` 验证版本号非空
+6. `is_running()` 验证服务已运行
+7. 进入统一收尾
 
 #### 分支 B: xray 已安装但未运行
 
@@ -105,11 +107,19 @@ UPDATE vps_task
 
    ```
    for each 代理出口 in 配置:
-       内 ping (toolbox/proxy_check 工具)
+       ok, egress_ip = toolbox.proxy_check.test_internal(   # v5.1: 返 (bool, egress_ip)
+           client, vps_port, inbound_user, inbound_pwd
+       )
+       # egress_ip = curl 通过该 inbound 访问 api.ipify.org 看到的真实出口 IP
+       # 业务上: 上游 IP(entry_host) ≠ 出口 IP(egress_ip), 必须实测
        ├─ 通 → 走"纳管入库":
-       │     · 用 lookup_egress 查上游出口的国家
-       │     · 写 ip_record (upsert by egress_ip, expire_date=NULL, is_active=1)
-       │     · 写 proxy_record (vps_port 原样保留, status='using')
+       │     · 用 lookup_egress(egress_ip) 查出口归属国家
+       │     · 写 ip_record (upsert by egress_ip, expire_date=NULL, is_active=1
+       │       入口 4 字段 entry_host/port/username/password ← 抠出来的上游凭据
+       │       出口字段 egress_ip ← 内 ping 反推的真出口
+       │       country_* ← lookup_egress 结果)
+       │     · 写 proxy_record (vps_port 原样保留, status='using',
+       │       egress_ip / egress_country 同步 ip_record)
        │
        └─ 不通 → 走"清理 remove":
              · 调 remove_proxy_binding(vps_port) 删三件套
@@ -136,6 +146,8 @@ UPDATE vps_task
 }
 ```
 
+⭐ v5.1 注: `default_inbound_port` **不写入 VPSRecord schema**（schema 没有此字段, 加字段在 T-07 范围外）, 只放在 worker 内部 tail_result 返回值里, 用于日志 + 调用方观测。需要长期持有时, 直接查 xray 配置 + 按 `_classify` 思路抠出 socks5→freedom 那条 inbound 的 port。
+
 ### 5. 端口规则
 
 - **纳管已有"代理出口"端口**: 原端口保持不动（ADR-0002 §2）。
@@ -157,19 +169,21 @@ used_port_count = proxy_record 中本 VPS status='using' 的条数
 
 ### 7. 失败处理
 
-失败信息写 `vps_task`:
+失败信息写 `vps_task`。⭐ v5.1 修订: 严格对齐 `db/models.py::TaskStatus` 4 值真相,删除字面上不存在的 `pending_retry` / `circuit_broken` 描述, 改为 worker 内部管理 retry_count + next_run_at, 重试时 task.status 回写 `pending`。
 
-| 场景 | task 终态 | last_error_code |
-|---|---|---|
-| SSH 重新连接失败（账密类） | `failed` | `auth_denied` |
-| SSH 重新连接失败（网络类临时） | `pending_retry`（退避 2^n 分钟, 上限 60 分钟） | `ssh_timeout` / `ssh_refused` |
-| 安装、启动、自启、验证失败（临时） | `pending_retry` | 具体阶段（如 `install_failed`） |
-| 同一 error_code 连续 5 次 | `circuit_broken` | 沿用最后一次 |
-| 默认入口端口让步降到 1024 仍占满 | `failed` | `no_default_port` |
-| 纳管某条出口配置畸形（缺字段、JSON 坏） | 跳过该条继续, 记 warning 日志 | — |
-| 配置读取、写入、校验、重载失败 | `failed` 或 `pending_retry`（看 error 性质） | 写具体阶段到 `last_error_msg` |
+| 场景 | task.status | last_error_code | 字段配合 |
+|---|---|---|---|
+| 抢到 task | `in_progress` | — | worker_id, locked_until=now+5min |
+| 成功 | `done` | — | completed_at=now, locked_until=NULL, worker_id="" |
+| SSH 连接失败（账密类） | `failed`（不可重试） | `auth_denied` | locked_until=NULL |
+| SSH 连接失败（网络类临时, retry_count < 5） | `pending`（回炉等下次扫到） | `ssh_timeout` / `ssh_refused` | retry_count+1, next_run_at=now+2^retry 分钟(上限 60), locked_until=NULL |
+| 安装/启动/自启/验证失败（临时, retry_count < 5） | `pending`（回炉） | 具体阶段（`install_failed` / `service_not_active` / `verify_failed` 等） | 同上 |
+| 同一/累计 retry_count >= 5（相当于"熔断"） | `failed`（终态） | 沿用最后一次 last_error_code | locked_until=NULL |
+| 默认入口端口让步降到 1024 仍占满 | `failed`（不可重试） | `no_default_port` | locked_until=NULL |
+| 纳管某条出口配置畸形（缺字段、JSON 坏） | 跳过该条继续, 记 warning 日志 | — | — |
+| 配置读取、写入、校验、重载失败 | `failed` 或 `pending`（看 error 性质） | 写具体阶段到 `last_error_msg` | — |
 
-实现可以在 worker 内部做短时重试, 但对外任务状态只落 `TaskStatus` 支持的值。
+注: spec v5 原表写 `pending_retry` / `circuit_broken` 是 v4 拍板"TaskStatus 只 4 值"之前的笔误。worker 内部的"退避重试" / "熔断"靠 retry_count + next_run_at 实现, task.status 字面只有 4 值。
 
 ### 8. 不做的事
 
@@ -230,8 +244,8 @@ XrayWorker 用 XrayManager 包装的 SSH client 操作 xray 服务:
 
 ### C. toolbox 通用工具（`toolbox/`）
 
-- `proxy_check.test_internal(host, port, user="", pwd="")` —— **内 ping**（从 VPS 内部 ping inbound 通不通）⭐ v5 新增（从 `xray/service.py::test_internal_socks` 搬过来 + 改名, 见 T-08）
-- `proxy_check.test_external(host, port, user="", pwd="")` —— **外 ping**（从外部探测 inbound）⭐ v5 新增占位（T-08）
+- `proxy_check.test_internal(client, port, user="", pwd="")` → `tuple[bool, str]` —— **内 ping + 顺手拿出口 IP** ⭐ v5.1 升级（T-07 实施时把 T-08 落定的 `-> bool` 升级为 `(bool, egress_ip)`, 通时 egress_ip 是 curl ipify 回显的真实出口 IP, 不通时空串）。第一参数是 `paramiko.SSHClient` 不是 `host`(v5 原描述笔误, v5.1 更正)。
+- `proxy_check.test_external(host, port, user="", pwd="")` → `bool` —— **外 ping**（从外部探测 inbound, 给 ProxyDeployWorker 用）
 - `geoip.lookup_egress(ip)` —— **pingIP**（查上游 IP 出口国家）, 现有, 直接用
 
 ### D. 工人内部私有编排
@@ -243,6 +257,13 @@ XrayWorker 用 XrayManager 包装的 SSH client 操作 xray 服务:
 ---
 
 ## 三、修订历史
+
+- v5.1 2026-06-08: T-07 实施时盘点既有代码 + 字段事实, 补 4 处:
+  - §3 分支 A 步骤补 ② `write_default_config()`（裸装完 config 为空, start 会 exit=23）+ ⑥ `is_running()` 验证
+  - §4 步骤 4 改用 `test_internal(client, port, user, pwd) → (bool, egress_ip)` 签名（v5.1 升级 toolbox 内 ping 工具）
+  - §4 成功出口加注: `default_inbound_port` **不写入 VPSRecord schema**（schema 无此字段, 加字段在 T-07 范围外）, 仅在 tail_result 返回值
+  - §7 失败处理表对齐 `db/models.py::TaskStatus` 4 值真相（删 `pending_retry` / `circuit_broken` 字面）, 重试靠 retry_count + next_run_at + status=`pending` 回炉
+  - §二 C `test_internal` 签名描述同步升级 + 修正第一参数是 client 而非 host
 
 - v5 2026-06-07: 落 ADR-0004 决策。
   - §3 分支 B/C 各补"看自启没设就设"前置步

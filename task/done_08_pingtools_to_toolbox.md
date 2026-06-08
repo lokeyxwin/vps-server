@@ -201,3 +201,15 @@ uv run python -c "from xray.service import test_internal_socks"                 
 ```
 
 两条都通,新 wrapper 可 import + legacy 没破。
+
+---
+
+## 后续签名升级备忘
+
+**2026-06-08 T-07 实施时升级**: `test_internal` 签名由 `-> bool` 升级为 `-> tuple[bool, egress_ip: str]`。
+
+原因: 纳管场景需要"通的同时拿回真实出口 IP"反推上游(`ip_record.egress_ip` 字段),只一个 bool 不够。多加一个孪生函数会让工具箱有两个名字相近的内 ping 工具,实现者要记调哪个;直接升底层契约更干净。XrayWorker 是 `test_internal` 的首个调用者,升级零代价。
+
+兼容用法: 只关心通不通的调用方 `ok, _ = test_internal(...)` 忽略第二项即可。
+
+详见: `test/xray_worker/spec.md` v5.1 §二 C + `task/done_07_*.md` commit 摘要。

@@ -86,13 +86,19 @@ def test_internal(
     user: str = "",
     pwd: str = "",
     timeout: int = DEFAULT_TIMEOUT,
-) -> bool:
-    """⭐ 内 ping —— 在 VPS 内部 SSH 跑 curl 测 inbound 通不通,返回 True/False。
+) -> tuple[bool, str]:
+    """⭐ 内 ping —— 在 VPS 内部 SSH 跑 curl 测 inbound 通不通, 顺手拿出口 IP。
 
-    用 socks5 走 127.0.0.1:port 发请求,通 = 服务器自己连自己通。
-    XrayWorker 统一收尾对每条"代理出口"内 ping,通则纳管入库,不通则 remove 三件套。
+    返回 (ok, egress_ip):
+        ok       : True/False, inbound 通不通
+        egress_ip: 通时是 curl body (即 api.ipify.org 看到的真实出口 IP);
+                   不通时返回 ""。
 
-    内部委托给 xray.service.test_internal_socks,只取 result["ok"]。
+    用 socks5 走 127.0.0.1:port 发请求, 通 = 服务器自己连自己通。
+    XrayWorker 纳管别人挂的代理出口时, 通的同时反推真实出口 IP 入 ip_record。
+    只需要 bool 的调用方 `ok, _ = test_internal(...)` 忽略第二项即可。
+
+    内部委托给 xray.service.test_internal_socks 拿完整 dict, 取 ok + body。
     """
     from xray.service import test_internal_socks  # noqa: PLC0415 — 局部 import 避免循环依赖
     result = test_internal_socks(
@@ -102,7 +108,9 @@ def test_internal(
         pwd=pwd,
         timeout=timeout,
     )
-    return result.get("ok", False)
+    ok = result.get("ok", False)
+    egress_ip = (result.get("body") or "").strip() if ok else ""
+    return ok, egress_ip
 
 
 def test_external(
