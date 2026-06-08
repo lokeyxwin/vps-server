@@ -270,7 +270,25 @@ def test_internal_socks(
     - 非空 → curl 用 socks5h://user:pwd@host:port 形式带账密
             （用于测 rgIP 部署的账密 inbound）
 
-    返回 {"ok": bool, "http_code": int|None, "body": str, "error": str|None}
+    返回:
+        {
+            "ok": bool,                # http_code == 200
+            "http_code": int | None,   # curl -w 写到 stdout 的 HTTP 状态码
+            "body": str,               # 响应体前 200 字符
+            "error": str | None,       # ok=False 时给一句话原因
+            "exit_code": int,          # curl shell exit code (IPProbeWorker 分类用)
+            "stderr": str,             # paramiko 通道 stderr (见下面 "stderr 填充" 说明)
+        }
+
+    IPProbeWorker 通过 `exit_code` 分四类 status（曲线 7 / 28 / 97 / 其他
+    → refused / timeout / auth_failed / failed）。
+
+    stderr 填充策略 (T-12 方案 A, 最小改动):
+        curl 命令保留 `-s ... 2>&1` 把 curl 的进度/错误合并进 stdout,
+        所以 `result["stderr"]` (paramiko 通道 stderr) 多数情况是空字符串,
+        只在 shell / paramiko 层错误时才有内容。
+        IPProbeWorker 主要靠 exit_code 分类, stderr 关键字 (含 "SOCKS5" 等)
+        只是辅助信号; 即使 stderr 空, exit_code 已足够区分 4 类失败。
     """
     # 选 socks5 URL 形式：带 auth 走 socks5h URL，无 auth 走 --socks5 host:port
     if user or pwd:
@@ -288,6 +306,8 @@ def test_internal_socks(
     )
     result = execute_command(client, cmd, timeout=timeout + 5)
     out = result["stdout"]
+    exit_code = result["exit_code"]
+    stderr = result["stderr"]
 
     # 解析 http_code
     http_code = None
@@ -309,4 +329,6 @@ def test_internal_socks(
         "http_code": http_code,
         "body": body,
         "error": None if ok else f"http_code={http_code} body={body!r}",
+        "exit_code": exit_code,
+        "stderr": stderr,
     }

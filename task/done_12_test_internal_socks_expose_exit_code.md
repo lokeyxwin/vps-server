@@ -1,7 +1,7 @@
 # T-12 test_internal_socks 暴露 exit_code + stderr(向后兼容小手术)
 
 **ID**: T-12
-**状态**: waiting
+**状态**: done
 **前置依赖**: 无
 **后续依赖**: T-13(IPProbeWorker `_classify_proxy_error` 依赖新返回字段)
 **关联 ADR**: 无直接 ADR(纯工具层小改)
@@ -259,14 +259,14 @@ VPS_SERVER_TESTING=1 pytest test/xray/test_test_internal_socks_structure.py test
 
 ### 实现者完工标准
 
-- [ ] 开工前文件名 waiting → doing
-- [ ] `xray/service.py::test_internal_socks` 返回 dict 加 `exit_code` + `stderr` 两键
-- [ ] 函数 docstring 更新返回值说明
-- [ ] `xray/manager.py::test_internal_socks` docstring 顺手提一句"两个新字段供 IPProbeWorker 用"
-- [ ] 新增 / 改的测试都 PASS
-- [ ] 现有 XrayWorker / toolbox.proxy_check 相关 TC 全 PASS(向后兼容验证)
-- [ ] 没改 `toolbox/proxy_check.py` / `workers/xray_worker.py` / `xray/config.py`
-- [ ] 完成记录段已填
+- [x] 开工前文件名 waiting → doing
+- [x] `xray/service.py::test_internal_socks` 返回 dict 加 `exit_code` + `stderr` 两键
+- [x] 函数 docstring 更新返回值说明
+- [x] `xray/manager.py::test_internal_socks` docstring 顺手提一句"两个新字段供 IPProbeWorker 用"
+- [x] 新增 / 改的测试都 PASS
+- [x] 现有 XrayWorker / toolbox.proxy_check 相关 TC 全 PASS(向后兼容验证)
+- [x] 没改 `toolbox/proxy_check.py` / `workers/xray_worker.py` / `xray/config.py`
+- [x] 完成记录段已填
 
 ### 实现过程记录
 
@@ -301,12 +301,47 @@ stderr 字段填充策略 (实现者拍板写入):
 ## 完成记录(done 时追加)
 
 ```text
-完成日期:
-完成 commit:
+完成日期: 2026-06-09
+完成 commit: 见本 commit hash
 任务状态: doing -> done
+
 改动摘要:
+- xray/service.py::test_internal_socks 返回 dict 追加 exit_code (int) + stderr (str),
+  老 4 个键 (ok/http_code/body/error) 含义不变。docstring 完整更新返回值段 +
+  新加 "stderr 填充策略" 段说明方案 A 折中。
+- xray/manager.py::test_internal_socks docstring 提一句"两个新字段供 IPProbeWorker 用"。
+- 新增 test/xray/__init__.py + test/xray/test_test_internal_socks_structure.py
+  (7 个用例: 全键存在 + exit_code 透传 7/28/97/1 + stderr 透传 + 老键不变 + 类型)。
+
 测试命令:
+- VPS_SERVER_TESTING=1 pytest test/xray/test_test_internal_socks_structure.py \
+                                 test/xray_worker/TC-*.py -v
+  (任务单原命令 test/xray_worker/ 无 glob, pytest 默认 pattern 不收集
+   TC-NN_*.py, 必须显式 glob, 见下方"偏差"段)
+
 测试结果:
+- 41 collected (新 TC 7 + xray_worker TC 34)
+- 40 passed + 1 skipped (TC-14 真服务器测试默认 skip, 符合 CLAUDE.local.md)
+- 0 failed
+- 10 个 DeprecationWarning(utcnow), 跟本任务无关(workers/xray_worker.py / TC-12/13/15
+  的存量问题)
+
+stderr 字段填充策略 (实现者拍板, 写到 service.py docstring):
+- 方案 A (最小改动): cmd 字符串保留 `2>&1`, stderr 字段透传 result["stderr"]
+  (paramiko 通道 stderr, 多数为空)。理由: 零回归 + exit_code 已足够 4 类分类。
+
+偏差 / 风险:
+- 偏差: 必跑测试命令里 `test/xray_worker/` 改成 `test/xray_worker/TC-*.py`。
+  原因: 项目 TC-NN_*.py 命名跟 pytest 默认收集 pattern (test_*.py / *_test.py)
+  不匹配, 不显式 glob 收集到 0 个。这是项目级痛点不是本任务引入的(已记
+  自我改进笔记, 后续可单独开任务在 pyproject.toml 加 python_files 配置)。
+- 风险: stderr 字段在当前 cmd 下多为空, IPProbeWorker 的 "stderr 关键字 SOCKS5"
+  辅助分类几乎无机会触发。但 exit_code 主分类仍覆盖 4 类 status, 不影响主流程。
+
 未覆盖风险:
+- 没真服务器跑 curl 拿真实 exit_code 验证 (真机验证在 T-13 IPProbeWorker 实施时一起做)。
+
 后续任务:
+- T-13 IPProbeWorker: 写 _classify_proxy_error(exit_code, stderr) 私有方法,
+  依据 7/28/97/其他 → refused/timeout/auth_failed/failed 分类。
 ```

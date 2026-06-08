@@ -217,6 +217,10 @@ class XrayManager:
         port: 测哪个 inbound（默认 18440 = default-direct noauth）
         user/pwd: 该 inbound 的 socks5 账密；rgIP 部署的端口需要传，
                  default-direct (18440) 是 noauth 留空即可
+
+        返回 dict 含 ok / http_code / body / error / exit_code / stderr。
+        后两者 (exit_code + stderr) 供 IPProbeWorker 失败分类用,
+        详细字段语义见 service.test_internal_socks docstring。
         """
         return service.test_internal_socks(self.client, port=port, user=user, pwd=pwd)
 
