@@ -1,7 +1,7 @@
 # T-11 ip_record.status 字段 + IPTask 表
 
 **ID**: T-11
-**状态**: waiting
+**状态**: done
 **前置依赖**: 无(纯 db 模型改造,不依赖其他任务)
 **后续依赖**: T-13(IPProbeWorker 实现会 import `IPStatus` / `IPTask`)
 **关联 ADR**: [[0001-workers-replace-services]] §决策 §6;[[0005-vps-stage-as-resource-lock]](两层锁分离,IPTask 也吃这套)
@@ -315,17 +315,17 @@ VPS_SERVER_TESTING=1 pytest test/_data_structures/test_ip_record_status.py test/
 
 > ⚠️ 全部打勾才允许改 `doing` → `done`。
 
-- [ ] 开工前文件名 waiting → doing
-- [ ] `db/models.py` 新增 `IPStatus` 类
-- [ ] `IPRecord` 加 `status` 字段 + `from_form` 默认带 USABLE
-- [ ] `db/models.py` 新增 `IPTask` 类(1:1 对称 VPSTask)
-- [ ] 新增 `test/_data_structures/test_ip_record_status.py` + `test_ip_task.py`
-- [ ] dev SQLite `ip_record` 已 ALTER 加 status 列
-- [ ] dev SQLite `ip_task` 表已 create
-- [ ] 必跑测试命令 PASS
-- [ ] 不动 VPSTask / VPSRecord / ProxyRecord 任何字段
-- [ ] 不动 services / workers / xray / tools 任何代码
-- [ ] 完成记录段已填(测试结果原样贴)
+- [x] 开工前文件名 waiting → doing
+- [x] `db/models.py` 新增 `IPStatus` 类
+- [x] `IPRecord` 加 `status` 字段 + `from_form` 默认带 USABLE
+- [x] `db/models.py` 新增 `IPTask` 类(1:1 对称 VPSTask)
+- [x] 新增 `test/_data_structures/test_ip_record_status.py` + `test_ip_task.py`
+- [x] dev SQLite `ip_record` 已 ALTER 加 status 列
+- [x] dev SQLite `ip_task` 表已 create
+- [x] 必跑测试命令 PASS
+- [x] 不动 VPSTask / VPSRecord / ProxyRecord 任何字段
+- [x] 不动 services / workers / xray / tools 任何代码
+- [x] 完成记录段已填(测试结果原样贴)
 
 ### 实现过程记录(实现者完工时填)
 
@@ -361,12 +361,66 @@ dev DB 迁移:
 ## 完成记录(done 时追加)
 
 ```text
-完成日期:
-完成 commit:
+完成日期: 2026-06-09
+完成 commit: 见本 commit hash
 任务状态: doing -> done
+
 改动摘要:
+- db/models.py:
+  - 新增 IPStatus 类 (USABLE="usable" / USING="using") 放在 IPProtocol 之后、
+    IPRecord 之前, 跟 VPSStage / ProxyStatus 风格一致。docstring 写清 IPProbeWorker
+    入库写 usable / ProxyDeployWorker 成功改 using / 失败不动 + 跟 is_active 独立维度。
+  - IPRecord 类内加 status 字段 (String(16), default=IPStatus.USABLE, nullable=False),
+    位置紧贴 user_label 之后、created_at 之前, 跟其他业务状态字段聚合。
+  - IPRecord.from_form 工厂方法 cls(...) 内显式追加 status=IPStatus.USABLE
+    (入参签名不动, 调用方完全兼容)。
+  - 新增 IPTask 类放在 VPSTask 之后, 1:1 对称: ip_id (FK ip_record, NOT NULL, index) +
+    vps_id (FK vps_record, nullable, index, 谁配的谁写) + 跟 VPSTask 完全对称的
+    status / retry_count / next_run_at / last_error_* / worker_id / locked_until /
+    created_at / updated_at / completed_at。索引 ix_ip_task_status_next_run +
+    ix_ip_task_ip_status。__repr__ 含 id/ip/vps/status/retry, vps_id NULL 时显示 '?'。
+  - TaskStatus 直接复用 (PENDING / IN_PROGRESS / DONE / FAILED), 不新加。
+- test/_data_structures/test_ip_record_status.py (新增): 6 个 TC 覆盖
+  IPStatus 常量值 + from_form 默认 USABLE + ORM default + 显式 using 落库 +
+  update 持久化 + schema 自描述。
+- test/_data_structures/test_ip_task.py (新增): 13 个 TC (12 + TC-12b vps_id NULL repr)
+  覆盖默认值 / NULL 字段 / ip_id 必填 / FK 违反 / vps_id 回填 / happy path /
+  两个索引 / TaskStatus 4 值复用 / __repr__。
+
+dev DB 迁移 (db/vps_server.db, 命令实际执行):
+- ALTER TABLE ip_record ADD COLUMN status VARCHAR(16) DEFAULT 'usable' NOT NULL;
+  -> ok (sqlite3 命令执行成功, 现有行 status='usable')
+- Base.metadata.create_all(engine, tables=[IPTask.__table__])
+  -> ok (ip_task 表 + 4 个索引 ix_ip_task_status_next_run / ix_ip_task_ip_status /
+   ix_ip_task_vps_id / ix_ip_task_ip_id 已建)
+
 测试命令:
+- VPS_SERVER_TESTING=1 pytest \
+    test/_data_structures/test_ip_record_status.py \
+    test/_data_structures/test_ip_task.py -v
+
 测试结果:
+- 19 collected, 19 passed in 0.20s
+- 顺便回归: pytest test/_data_structures/ -v
+  -> 38 passed + 1 skipped (VPSTask TC-11 抢锁原子性占位, 跟本任务无关)
+
+偏差 / 风险:
+- 偏差: test_ip_task.py 多加了 TC-12b (vps_id=NULL 时 repr 显示 'vps=?'),
+  对应 __repr__ 内 `self.vps_id or '?'` 逻辑。不在任务单测试矩阵但补强 __repr__
+  对 nullable 字段的展示, 不影响主功能。
+- dev SQLite 自动多建了 ix_ip_task_vps_id / ix_ip_task_ip_id 两个 FK 隐式索引,
+  跟 spec 显式索引 (ix_ip_task_status_next_run / ix_ip_task_ip_status) 共存,
+  是 SQLAlchemy FK index=True 的默认行为, 不冲突。
+
 未覆盖风险:
+- TC-11 类型 (抢锁原子性 SQLite 单连接难测) 没单独占位; 沿用 VPSTask 已有 TC-11
+  skip 模式, 等 ProxyDeployWorker 真机时一并验证。
+- 没造数据演练 ProxyDeployWorker 挑机 SQL: `SELECT vps_record WHERE stage='connectable'
+  AND xray_version != '' AND is_active=1 ORDER BY used_port_count ASC` (那是
+  ProxyDeployWorker 任务的事)。
+
 后续任务:
+- T-13 IPProbeWorker 实现: 同事务写 ip_record(status=usable) + ip_task(pending, vps_id=NULL)。
+- 未来 ProxyDeployWorker: 抢 ip_task -> 挑 vps -> 配置成功同事务改 ip_record.status=using
+  + 回填 ip_task.vps_id + vps.stage 流转。
 ```

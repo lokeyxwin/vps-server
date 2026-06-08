@@ -297,6 +297,29 @@ class IPProtocol:
     HTTP = "http"
 
 
+class IPStatus:
+    """ip_record.status 状态机(IPProbeWorker / ProxyDeployWorker 协同维护)。
+
+    谁推进:
+      IPProbeWorker 入库时       → 永远写 USABLE
+      ProxyDeployWorker 配置成功 → 同事务改成 USING
+      ProxyDeployWorker 配置失败 → 不动 status(保持 USABLE,下次任务重新挑 VPS)
+
+    业务含义:
+      USABLE = IPProbeWorker 校验通过,等 ProxyDeployWorker 来挑
+      USING  = 已被某台生产 VPS 挂上,真正在用
+
+    跟 is_active 是独立维度:
+      is_active = 整体还有效(过期标 0)
+      status    = 当前在不在被用(业务流转)
+
+    详见 test/ip_probe_worker/spec.md v2 §6。
+    """
+
+    USABLE = "usable"
+    USING = "using"
+
+
 class IPRecord(Base):
     """上游代理 ORM 模型（一行 = 一条 egress_ip）。
 
@@ -341,6 +364,12 @@ class IPRecord(Base):
     is_active: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     # 用户自定义备注，不参与查询匹配
     user_label: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+
+    # ---------- 业务流转状态机（T-11 新增, spec v2 §6）----------
+    # IPProbeWorker 入库时永远写 USABLE；ProxyDeployWorker 配置成功改 USING
+    status: Mapped[str] = mapped_column(
+        String(16), default=IPStatus.USABLE, nullable=False
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
@@ -396,6 +425,7 @@ class IPRecord(Base):
             provider_domain=provider_domain,
             expire_date=expire_date,
             user_label=user_label,
+            status=IPStatus.USABLE,
         )
 
     def __repr__(self) -> str:
@@ -495,5 +525,74 @@ class VPSTask(Base):
         # 不打印 last_error_msg（长字段）
         return (
             f"<VPSTask id={self.id} vps={self.vps_id} "
+            f"status={self.status} retry={self.retry_count}>"
+        )
+
+
+class IPTask(Base):
+    """IP 挂机部署任务。ProxyDeployWorker 消费(T-11 新增)。
+
+    每条 = 把某条新登记的 IP 挂到某台生产 VPS 当 outbound 的活儿。
+    IPProbeWorker 入库 IP 时建一条 pending,ProxyDeployWorker 扫表领。
+
+    锁粒度 = task(跟 VPSTask 同样的软锁机制,详见 ADR-0005 两层锁分离)。
+    vps_id 谁配的谁写:
+      IPProbeWorker 建任务时留 NULL(此刻还不知道挂哪台 VPS)
+      ProxyDeployWorker 挑到 VPS 后回填(同事务里跟 vps.stage=running 联动)
+
+    retry_count / next_run_at / worker_id / locked_until 4 个字段
+    **都给 ProxyDeployWorker 内部用**(自管退避 + 软锁),不驱动 status 状态机。
+    """
+
+    __tablename__ = "ip_task"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    ip_id: Mapped[int] = mapped_column(
+        ForeignKey("ip_record.id", ondelete="RESTRICT"),
+        nullable=False, index=True,
+    )
+    # 谁配的谁写:IPProbeWorker 建任务时留 NULL,ProxyDeployWorker 挑到 VPS 后回填
+    vps_id: Mapped[int | None] = mapped_column(
+        ForeignKey("vps_record.id", ondelete="RESTRICT"),
+        nullable=True, index=True,
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(16), default=TaskStatus.PENDING, nullable=False
+    )
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    next_run_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), nullable=False
+    )
+
+    last_error_code: Mapped[str] = mapped_column(String(32), default="", nullable=False)
+    last_error_msg: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+
+    worker_id: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        # worker 扫表领活儿:按 status='pending' + next_run_at <= now 查
+        Index("ix_ip_task_status_next_run", "status", "next_run_at"),
+        # 查"IP#X 当前有没有任务在跑"
+        Index("ix_ip_task_ip_status", "ip_id", "status"),
+    )
+
+    def __repr__(self) -> str:
+        # 不打印 last_error_msg（长字段）;vps_id 未回填时显示 '?'
+        return (
+            f"<IPTask id={self.id} ip={self.ip_id} vps={self.vps_id or '?'} "
             f"status={self.status} retry={self.retry_count}>"
         )
