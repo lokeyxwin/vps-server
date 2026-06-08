@@ -8,9 +8,9 @@
 
 ## 验收锚点
 
-- `tests_behavior/ssh_worker/spec.md` v4 §3 路线 B ④（SSHWorker 派 task）
-- `tests_behavior/ssh_worker/spec.md` v4 §5 不变量：**错误信息只住 vps_task 表，不住 vps_record**
-- `tests_behavior/ssh_worker/spec.md` v4 §0 实现者硬约束（旧代码姿势 + 缺工具先报告）
+- `test/ssh_worker/spec.md` v4 §3 路线 B ④（SSHWorker 派 task）
+- `test/ssh_worker/spec.md` v4 §5 不变量：**错误信息只住 vps_task 表，不住 vps_record**
+- `test/ssh_worker/spec.md` v4 §0 实现者硬约束（旧代码姿势 + 缺工具先报告）
 - `CLAUDE.local.md` §4 task 表 + worker 接力规则
 - `CLAUDE.local.md` §0 legacy 代码三档姿势表（services / test / xray 旧函数禁直接 import）
 - `docs/adr/0001-workers-replace-services.md` §决策（task 表是异步协调媒介）
@@ -45,7 +45,7 @@
 __all__ 加: VPSTask, TaskStatus
 ```
 
-### 新建 `tests_behavior/_data_structures/test_vps_task.py`
+### 新建 `test/_data_structures/test_vps_task.py`
 
 11 个 schema 测试（详见下面）
 
@@ -215,7 +215,7 @@ class VPSTask(Base):
 
 ## 测试用例（实现者按这些写 .py）
 
-测试文件: `tests_behavior/_data_structures/test_vps_task.py`
+测试文件: `test/_data_structures/test_vps_task.py`
 
 ```
 TC-01  建新 VPSTask, status 默认 "pending"
@@ -320,14 +320,14 @@ VPS),不是产品工具。
 2. `db/__init__.py`
    - import + `__all__` 加 `VPSTask` + `TaskStatus`
 
-3. 新建 `tests_behavior/_data_structures/test_vps_task.py`
+3. 新建 `test/_data_structures/test_vps_task.py`
    - 12 TC,11 OK + 1 intentional skip (TC-11 抢锁原子性等真机 PG/MySQL 多连接环境)
-   - 顶部 / 尾部按 `tests_behavior/README.md` 三段约定
+   - 顶部 / 尾部按 `test/README.md` 三段约定
    - 独立 in-memory SQLite + 开 `PRAGMA foreign_keys=ON` (TC-07 验 FK 报错需要)
    - 测试用 `Session.get(VPSTask, id)` 新 API + `datetime.now(timezone.utc)`
      (避免 SQLAlchemy 2.0 / Py 3.13 deprecation 噪音)
 
-**T-01 测试回归确认**: `tests_behavior._data_structures.test_vps_record_v4`
+**T-01 测试回归确认**: `test._data_structures.test_vps_record_v4`
 8/8 仍过(0.016s)。T-01 / T-02 真独立。
 
 **12 TC 跑通时间**: 2026-06-07,1.134s,`OK (skipped=1)`。
@@ -339,7 +339,7 @@ VPS),不是产品工具。
 ## Claude 验收检查清单
 
 ```
-□ 跑 tests_behavior/_data_structures/test_vps_task.py 全过 (含 skip TC-11)
+□ 跑 test/_data_structures/test_vps_task.py 全过 (含 skip TC-11)
 □ git diff db/models.py:
     - 确认加了 class TaskStatus (**4 个常量没多没少**)
     - 确认加了 class VPSTask (字段没多没少, 类型对)

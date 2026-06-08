@@ -8,15 +8,15 @@
 
 ## 验收锚点
 
-- `tests_behavior/ssh_worker/spec.md` **v4** §0 实现者硬约束（旧代码姿势 + 缺工具先报告 + 工具优先复用）
-- `tests_behavior/ssh_worker/spec.md` **v4** §3 三条主路线（A/B/C，**没有 D**）
-- `tests_behavior/ssh_worker/spec.md` **v4** §5 不变量：
+- `test/ssh_worker/spec.md` **v4** §0 实现者硬约束（旧代码姿势 + 缺工具先报告 + 工具优先复用）
+- `test/ssh_worker/spec.md` **v4** §3 三条主路线（A/B/C，**没有 D**）
+- `test/ssh_worker/spec.md` **v4** §5 不变量：
   - SSHWorker 只 touch vps_record + vps_task 两表
   - SSHWorker 写入的 stage 只能是 `connectable`
   - SSHWorker 写入的 xray_version 永远空字符串
   - 错误信息只住 vps_task 表，不住 vps_record
   - 路线 C（SSH 失败）**永远不写库**
-- `tests_behavior/ssh_worker/spec.md` **v4** §7 §工具清单（VPSSession 用法 + 不调 XrayManager）
+- `test/ssh_worker/spec.md` **v4** §7 §工具清单（VPSSession 用法 + 不调 XrayManager）
 - `CLAUDE.local.md` §0 legacy 代码三档姿势表（services / test / xray 旧函数禁直接 import）
 - `CLAUDE.md` §7.2 主推类的实例方法
 
@@ -42,10 +42,10 @@
 ### 新建测试
 
 ```
-tests_behavior/ssh_worker/TC-01_query_existing.py     测 _查重
-tests_behavior/ssh_worker/TC-02_probe_ssh.py          测 _敲门看一眼
-tests_behavior/ssh_worker/TC-03_persist.py            测 _入库派任务
-tests_behavior/ssh_worker/TC-04_failure.py            测 _失败路径处理（**全部不入库**）
+test/ssh_worker/TC-01_query_existing.py     测 _查重
+test/ssh_worker/TC-02_probe_ssh.py          测 _敲门看一眼
+test/ssh_worker/TC-03_persist.py            测 _入库派任务
+test/ssh_worker/TC-04_failure.py            测 _失败路径处理（**全部不入库**）
 ```
 
 ### 不动
@@ -259,7 +259,7 @@ tests_behavior/ssh_worker/TC-04_failure.py            测 _失败路径处理（
 
 ## 测试用例（实现者按这些写 .py）
 
-### TC-01 `tests_behavior/ssh_worker/TC-01_query_existing.py`
+### TC-01 `test/ssh_worker/TC-01_query_existing.py`
 
 ```
 TC-01-a  DB 空 → _查重 返回 None
@@ -438,10 +438,10 @@ TC-04-f  提示文案合规:
 跑通命令(参考):
 ```bash
 VPS_SERVER_TESTING=1 python -m unittest \
-  tests_behavior.ssh_worker.TC-01_query_existing \
-  tests_behavior.ssh_worker.TC-02_probe_ssh \
-  tests_behavior.ssh_worker.TC-03_persist \
-  tests_behavior.ssh_worker.TC-04_failure
+  test.ssh_worker.TC-01_query_existing \
+  test.ssh_worker.TC-02_probe_ssh \
+  test.ssh_worker.TC-03_persist \
+  test.ssh_worker.TC-04_failure
 ```
 
 ---

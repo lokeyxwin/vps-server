@@ -58,7 +58,7 @@
      agent 看后端干啥的唯一窗口
    - 数据查询(get_available_proxy_nodes):纯只读
 
-6. **行为故事先于实现** —— 每个 worker 在 `tests_behavior/<worker>/spec.md`
+6. **行为故事先于实现** —— 每个 worker 在 `test/<worker>/spec.md`
    有产品视角的验收标准(用户口述原话金标准),实现按 spec 写。
 
 ## 备选方案
@@ -141,7 +141,7 @@
 本决策落地需要以下配套(各自单独 task / spec):
 
 - `CLAUDE.local.md` 追加"业务编排:worker / kit / task 体系"一大节
-- 每个 worker 写 `tests_behavior/<worker>/spec.md`(行为规约)
+- 每个 worker 写 `test/<worker>/spec.md`(行为规约)
 - `db/models.py` 新增 `Task` 表
 - 实现 4 个工人:SSHWorker / XrayWorker / IPProbeWorker / ProxyDeployWorker
 - 重写 `xray/manager.py::XrayManager`:新方法全部直接在类里写实现,

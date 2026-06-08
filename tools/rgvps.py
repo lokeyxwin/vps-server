@@ -16,7 +16,7 @@
   - workers.ssh_worker.SSHWorker (业务工人)
 
 业务规约金标准:
-  tests_behavior/ssh_worker/spec.md
+  test/ssh_worker/spec.md
 
 实现等任务单填,本文件目前空占位.
 """

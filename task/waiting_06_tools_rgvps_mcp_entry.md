@@ -8,11 +8,11 @@
 
 ## 验收锚点
 
-- `tests_behavior/ssh_worker/spec.md` **v4** §0 实现者硬约束（旧代码姿势 + 缺工具先报告）
-- `tests_behavior/ssh_worker/spec.md` **v4** §2 入口契约：
+- `test/ssh_worker/spec.md` **v4** §0 实现者硬约束（旧代码姿势 + 缺工具先报告）
+- `test/ssh_worker/spec.md` **v4** §2 入口契约：
   - 入参：ip / user / pwd / port（**必填**）/ ed / provider（**可选**）
   - 返回 5 种 status（**没有** `unreachable`）
-- `tests_behavior/ssh_worker/spec.md` **v4** §3 三条主路线
+- `test/ssh_worker/spec.md` **v4** §3 三条主路线
 - `tools/get_available_proxy_nodes.py` 的现有 MCP 协议适配模式（仅参考，不 import）
 - `CLAUDE.local.md` §0 legacy 代码三档姿势表
 - `CLAUDE.local.md` §模块组织 / MCP 工具命名和描述约束
@@ -43,7 +43,7 @@
 ### 新建测试
 
 ```
-tests_behavior/ssh_worker/TC-06_e2e_via_mcp.py
+test/ssh_worker/TC-06_e2e_via_mcp.py
 端到端集成测试, 通过 MCP handler 调用整条 rgvps 链路
 ```
 
@@ -193,7 +193,7 @@ ALL_TOOLS = [
 
 ## 测试用例（实现者按这些写 .py）
 
-### TC-06 `tests_behavior/ssh_worker/TC-06_e2e_via_mcp.py`
+### TC-06 `test/ssh_worker/TC-06_e2e_via_mcp.py`
 
 ```
 端到端走整条 rgvps 链路。mock SSHWorker.process 验证 handler 协议层。

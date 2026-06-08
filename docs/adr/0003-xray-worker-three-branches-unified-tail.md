@@ -120,8 +120,8 @@ ADR-0002 把 XrayWorker 处理服务器时按现状分 4 个分支:
 
 | 文件 | 改动 |
 |------|------|
-| `tests_behavior/xray_worker/spec.md` §3 | 改 4 分支为 3 分支 + 统一收尾 7 步 |
-| `tests_behavior/xray_worker/spec.md` §三 修订历史 | 加 v3 条目 |
+| `test/xray_worker/spec.md` §3 | 改 4 分支为 3 分支 + 统一收尾 7 步 |
+| `test/xray_worker/spec.md` §三 修订历史 | 加 v3 条目 |
 | `docs/adr/0002-takeover-mode-handled-by-xray-worker.md` | 不动(其余决策仍有效) |
 | `docs/adr/0003-*.md`(本文件) | 新建 |
 | `CLAUDE.local.md` §12 纳管模式 | 描述风格无大变(仍是"由 XrayWorker 包揽") |

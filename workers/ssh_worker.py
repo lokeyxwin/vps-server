@@ -22,7 +22,7 @@
   - unreachable       (超时/拒接,重试仍失败,入库标 unreachable)
 
 行为规约金标准:
-  tests_behavior/ssh_worker/spec.md
+  test/ssh_worker/spec.md
 
 实现等任务单填,本文件目前是骨架占位.
 """

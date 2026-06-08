@@ -6,5 +6,5 @@
 详见:
 - CLAUDE.local.md §1 目录布局
 - CLAUDE.local.md §9 工人阵容
-- tests_behavior/<worker>/spec.md (各工人行为规约)
+- test/<worker>/spec.md (各工人行为规约)
 """

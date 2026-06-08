@@ -154,9 +154,9 @@ XrayWorker 干 A / B / C,情况 D 派 `vps_task=takeover` 给 TakeoverWorker。
 
 本决策落地需要以下配套(单独 task 或后续 ADR):
 
-- 改 `tests_behavior/ssh_worker/spec.md`:明确 SSHWorker 永远只标 stage='connectable',
+- 改 `test/ssh_worker/spec.md`:明确 SSHWorker 永远只标 stage='connectable',
   不越权判断 running
-- 建 `tests_behavior/xray_worker/spec.md`:列 A/B/C/D 4 个分支 + 纳管 6 步详细行为
+- 建 `test/xray_worker/spec.md`:列 A/B/C/D 4 个分支 + 纳管 6 步详细行为
 - 改 `CLAUDE.local.md §9 工人阵容`:XrayWorker "主要职责"补"含纳管"
 - 改 `CLAUDE.local.md §7 xray 默认入口`:保留 18440 默认入口规则,但取消
   18441-18450 业务段限定
