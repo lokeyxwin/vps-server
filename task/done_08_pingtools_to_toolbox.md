@@ -172,3 +172,32 @@ def test_external(
 - 一并把 `xray/service.py::test_internal_socks` 实现真正搬到 `toolbox/proxy_check.py::test_internal` 里
 - 删 `xray/service.py::test_internal_socks`
 - 那是另一份 task,不在本任务范围
+
+---
+
+## 完工记录
+
+**完工时间**: 2026-06-08
+**实现窗口**: Claude (Opus 4.7)
+
+**实际改动**:
+
+- `task/waiting_08_*.md` → `doing_*` → `done_*`
+- `toolbox/proxy_check.py`:
+  - 新增 `import paramiko`(类型签名要用)
+  - 新增 `test_internal(client, port, user, pwd, timeout) -> bool`(内 ping 薄 wrapper,内部局部 import `xray.service.test_internal_socks` 取 `result["ok"]`)
+  - 新增 `test_external(host, port, user, pwd, timeout) -> bool`(外 ping 薄 wrapper,内部调本文件 `test_socks_proxy` 取 `result["ok"]`)
+  - `test_socks_proxy` / 现有常量 / 旧 docstring 不动
+
+**轻微措辞调整**(实现轮廓 vs CLAUDE.md §7.6 注释规范):
+
+任务单实现轮廓 docstring 里有"等 legacy services/ 整体删除时再把实现彻底搬过来"这种 TODO 性质的说明,按 CLAUDE.md §7.6"注释只描述实现事实,禁止历史 / 决策 / TODO",落码时改成"内部委托给 xray.service.test_internal_socks,只取 result['ok']"——保留"当前是 wrapper"的客观事实,去掉 TODO。legacy 待清理的事实由任务单本身 + [[project-legacy_cleanup_pending]] 跟踪,不进 docstring。
+
+**验证**:
+
+```
+uv run python -c "from toolbox.proxy_check import test_internal, test_external"  → toolbox ok
+uv run python -c "from xray.service import test_internal_socks"                   → legacy ok
+```
+
+两条都通,新 wrapper 可 import + legacy 没破。

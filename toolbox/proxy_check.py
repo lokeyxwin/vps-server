@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import paramiko
 import requests
 
 import config
@@ -77,3 +78,52 @@ def test_socks_proxy(
             "body": "",
             "error": f"{type(exc).__name__}: {exc}",
         }
+
+
+def test_internal(
+    client: paramiko.SSHClient,
+    port: int,
+    user: str = "",
+    pwd: str = "",
+    timeout: int = DEFAULT_TIMEOUT,
+) -> bool:
+    """⭐ 内 ping —— 在 VPS 内部 SSH 跑 curl 测 inbound 通不通,返回 True/False。
+
+    用 socks5 走 127.0.0.1:port 发请求,通 = 服务器自己连自己通。
+    XrayWorker 统一收尾对每条"代理出口"内 ping,通则纳管入库,不通则 remove 三件套。
+
+    内部委托给 xray.service.test_internal_socks,只取 result["ok"]。
+    """
+    from xray.service import test_internal_socks  # noqa: PLC0415 — 局部 import 避免循环依赖
+    result = test_internal_socks(
+        client=client,
+        port=port,
+        user=user,
+        pwd=pwd,
+        timeout=timeout,
+    )
+    return result.get("ok", False)
+
+
+def test_external(
+    host: str,
+    port: int,
+    user: str = "",
+    pwd: str = "",
+    timeout: int = DEFAULT_TIMEOUT,
+) -> bool:
+    """⭐ 外 ping —— 从本机通过 socks5 代理发请求测远程 inbound 通不通,返回 True/False。
+
+    用 socks5 走 host:port 从 worker 本机发请求,通 = 外部到 VPS 网络路径 + 防火墙都放行。
+    后续 ProxyDeployWorker 部署新代理出口后用,验证客户端能从外部连上。
+
+    内部委托给 test_socks_proxy,只取 result["ok"]。
+    """
+    result = test_socks_proxy(
+        proxy_ip=host,
+        proxy_port=port,
+        user=user,
+        pwd=pwd,
+        timeout=timeout,
+    )
+    return result.get("ok", False)
