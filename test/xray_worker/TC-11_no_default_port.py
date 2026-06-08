@@ -3,7 +3,7 @@
 [用例描述 —— DO NOT MODIFY]
 ========================================================================
 
-TC-11 让步降到 1024 全占 → no_default_port 失败 (ADR-0004 §2, spec v5.1 §7)
+TC-11 让步降到 1024 全占 → no_default_port 失败 (ADR-0004 §2, spec v5.2 §7 + ADR-0005)
 
 故事:
   让步算法降到下限 1024 仍找不到空位 → 抛 NoDefaultPortError.
@@ -11,11 +11,12 @@ TC-11 让步降到 1024 全占 → no_default_port 失败 (ADR-0004 §2, spec v5
     task.status = 'failed'
     task.last_error_code = 'no_default_port'
     task.locked_until = NULL
-  vps.stage 保持 'connectable' 不升 'running'.
+  vps.stage 保持 'running' (失败锁住等"维修工人"或人工介入, ADR-0005 §3).
+  (注: 抢到 task 时 _lock_vps_resource 把 stage 升 running, 失败时不释放)
 
 测试矩阵:
   TC-11-a 18440~1024 全占的 cfg → _find_default_port 抛 NoDefaultPortError
-  TC-11-b process_task 命中 NoDefaultPortError → task=failed, vps.stage 保留
+  TC-11-b process_task 命中 NoDefaultPortError → task=failed, vps.stage='running' 保留
 ========================================================================
 """
 
@@ -116,7 +117,6 @@ class TestNoDefaultPort(unittest.TestCase):
                         mock_xc.is_config_blank.return_value = False
                         mock_xc.read_config.return_value = full_cfg
 
-                        # 给 vps 先标 RUNNING 看会不会被错误地保留 → spec 说保持 connectable
                         # 让 vps 进 process_task 时 xray_version 不空, 走 C 分支
                         with Session() as s:
                             v = s.get(VPSRecord, vps_id)
@@ -132,8 +132,8 @@ class TestNoDefaultPort(unittest.TestCase):
                 self.assertEqual(t.status, TaskStatus.FAILED)
                 self.assertEqual(t.last_error_code, "no_default_port")
                 self.assertIsNone(t.locked_until)
-                # vps.stage 不应升到 RUNNING
-                self.assertEqual(v.stage, VPSStage.CONNECTABLE)
+                # vps.stage 失败时保持 RUNNING (锁住等维修, ADR-0005 §3)
+                self.assertEqual(v.stage, VPSStage.RUNNING)
         finally:
             engine.dispose()
 

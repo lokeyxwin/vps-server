@@ -12,7 +12,7 @@ TC-14 ⚠️ 真机集成测 (default SKIP, dev 手动开)
     - 统一收尾把"直进直出"默认入口加上 (18440 或让步后端口)
     - 纳管已有出口 → ip_record / proxy_record 落库正确
     - 不通的出口被 remove_proxy_binding 删干净
-    - task.status=done, vps.stage=running
+    - task.status=done, vps.stage=connectable (完工释放资源锁, ADR-0005)
 
 启动方式:
   export VPS_XRAY_REAL_TEST=1
@@ -42,7 +42,7 @@ _REAL_TEST_FLAG = "VPS_XRAY_REAL_TEST"
 class TestRealServer(unittest.TestCase):
 
     def test_tc14_real_server_end_to_end(self):
-        """端到端: rgvps → SSHWorker → vps_task → XrayWorker.process_task → vps.stage=running."""
+        """端到端: rgvps → SSHWorker → vps_task → XrayWorker.process_task → vps.stage=connectable."""
         ip = os.environ.get("VPS_XRAY_REAL_IP", "")
         user = os.environ.get("VPS_XRAY_REAL_USER", "root")
         pwd = os.environ.get("VPS_XRAY_REAL_PWD", "")

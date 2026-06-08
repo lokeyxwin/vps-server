@@ -1,13 +1,14 @@
 # XrayWorker 行为规约（spec.md）
 
-**版本**: v5.1（2026-06-08）
+**版本**: v5.2（2026-06-08）
 **模块**: `workers/xray_worker.py`
 **类型**: 异步 task 工人
 **对应 ADR**:
-- `docs/adr/0001-workers-replace-services.md`（worker 架构）
+- `docs/adr/0001-workers-replace-services.md`（worker 架构;§决策 §4 "单层 task 锁" 部分被 ADR-0005 supersede）
 - `docs/adr/0002-takeover-mode-handled-by-xray-worker.md`（纳管端口不迁移）
 - `docs/adr/0003-xray-worker-three-branches-unified-tail.md`（3 分支 + 统一收尾）
-- `docs/adr/0004-xray-worker-flow-refinements.md`（**本版关键依据**：分支 B/C 补自启、端口让步、直进直出判定、内 ping 不通 remove）
+- `docs/adr/0004-xray-worker-flow-refinements.md`（分支 B/C 补自启、端口让步、直进直出判定、内 ping 不通 remove）
+- `docs/adr/0005-vps-stage-as-resource-lock.md`（**本版关键依据**：vps.stage 是 VPS 资源锁，task 是任务并发锁，两层锁分离）
 
 ---
 
@@ -18,11 +19,12 @@
 XrayWorker 是 VPS 装机和纳管工人:
 
 - 异步消费 `vps_task`。
-- 抢到任务后 SSH 进入目标 VPS。
+- **抢到 task 后立刻把 `vps.stage` 标 `running`(占 VPS 资源锁, SSH 之前完成)**(ADR-0005 §1)。
+- SSH 进入目标 VPS。
 - 根据 xray 现状走 3 个前置分支。
 - 无论哪个分支, 最后都执行统一收尾。
-- 成功后把 `vps_record.stage` 升级为 `running`。
-- 只有 XrayWorker 能把 VPS 标成 `running`。
+- **成功后把 `vps.stage` 释放回 `connectable`**(还回池子, 让 ProxyDeployWorker 等后续工人能拿)。
+- **失败时 `vps.stage` 保持 `running`**(锁住等"维修工人"或人工介入, ADR-0005 §3)。
 
 ### 2. 入口契约
 
@@ -43,12 +45,24 @@ UPDATE vps_task
 - `1`: 抢到任务。
 - `0`: 已被别人抢走, 换下一条。
 
+**抢到 task 后立刻占资源锁**(SSH 之前):
+
+```python
+with session_scope() as s:
+    vps = s.get(VPSRecord, task.vps_id)
+    vps.stage = VPSStage.RUNNING
+```
+
+跟任务并发锁(`vps_task.status='in_progress' + locked_until`)是**两层不同维度的锁**:
+- 资源锁(`vps.stage`)跨工人/部门, 防多业务同时操作同一台 VPS
+- 任务锁(`vps_task`)防多工人抢同一张任务单
+
 **输入**: `vps_task.vps_id` 指向的 `vps_record`。
 
 **输出**:
 
-- 成功: `task.status='done'`, `vps_record.stage='running'`。
-- 失败: `task.status='failed'` 或 `'pending_retry'` 或 `'circuit_broken'`, `last_error_code` / `last_error_msg` 写任务表。
+- 成功: `task.status='done'`, `vps.stage='connectable'`(资源锁释放)。
+- 失败(任何路径): `task.status='failed'` 或 `'pending'`(回炉等重试), `last_error_code` / `last_error_msg` 写任务表; **`vps.stage` 保持 `'running'`**(锁住等维修)。
 - 纳管时可能写入 `ip_record` 和 `proxy_record`。
 
 ### 3. 三个前置分支
@@ -134,17 +148,21 @@ UPDATE vps_task
 
 6. `is_running()` 验证 reload 后服务仍在运行。
 
-**成功出口**:
+**成功出口**(tail_result 返回结构, 内部用):
 
 ```python
 {
-    "stage": "running",
-    "task_status": "done",
     "xray_version": "<actual version>",
     "default_inbound_port": <实际占用的默认入口端口, 18440 或让步后的值>,
     "used_port_count": <纳管入库的"代理出口"数, 即内 ping 通的条数>,
 }
 ```
+
+`_mark_done` 把上述结果写入 DB 时:
+- `vps.stage = 'connectable'`(资源锁释放, ADR-0005)
+- `vps.xray_version = tail_result["xray_version"]`
+- `vps.used_port_count = tail_result["used_port_count"]`
+- `task.status = 'done'`
 
 ⭐ v5.1 注: `default_inbound_port` **不写入 VPSRecord schema**（schema 没有此字段, 加字段在 T-07 范围外）, 只放在 worker 内部 tail_result 返回值里, 用于日志 + 调用方观测。需要长期持有时, 直接查 xray 配置 + 按 `_classify` 思路抠出 socks5→freedom 那条 inbound 的 port。
 
@@ -200,13 +218,19 @@ XrayWorker 不做:
 
 跑完 XrayWorker 后必须满足:
 
-- `task.status='done'` 时, `vps.stage='running'`。
-- `vps.stage='running'` 时, xray 服务确认在跑。
-- `vps.stage='running'` 时, xray 配置里**至少有一条 socks5 + 路由到 freedom 的 inbound**（端口优先 18440, 让步后可能是 18439/18438/...，记录在 `default_inbound_port`）。
+**锁状态机不变量**(ADR-0005):
+- `task.status='in_progress'` 时, `vps.stage='running'`(抢到 task 后立刻占, SSH 之前)。
+- `task.status='done'` 时, `vps.stage='connectable'`(完工释放回池子)。
+- `task.status='failed'` 时, `vps.stage='running'`(锁住等维修)。
+- `task.status='pending'` 且 `retry_count > 0` 时(可重试失败回炉), `vps.stage='running'`(锁住等下次重试)。
+
+**业务不变量**:
+- xray 服务在跑(无论 task 是 in_progress / done / failed, 只要前置走到 _unified_tail 末尾就该满足)。
+- xray 配置里**至少有一条 socks5 + 路由到 freedom 的 inbound**(端口优先 18440, 让步后可能是 18439/18438/..., 记录在 `default_inbound_port`)。
 - `used_port_count` 等于本 VPS `proxy_record` 中 `status='using'` 的条数。
 - 纳管 `ip_record` 的 `expire_date` 为 `NULL`。
-- 默认入口（socks5→freedom 那条）**不写入 `proxy_record`, 不写入 `ip_record`**。
-- 内 ping 不通的"代理出口"在 xray 配置里**不留痕**（已被 `remove_proxy_binding` 删干净）, ip/proxy 表也**不留痕**。
+- 默认入口(socks5→freedom 那条)**不写入 `proxy_record`, 不写入 `ip_record`**。
+- 内 ping 不通的"代理出口"在 xray 配置里**不留痕**(已被 `remove_proxy_binding` 删干净), ip/proxy 表也**不留痕**。
 
 ### 10. 边界情况
 
@@ -257,6 +281,15 @@ XrayWorker 用 XrayManager 包装的 SSH client 操作 xray 服务:
 ---
 
 ## 三、修订历史
+
+- v5.2 2026-06-08: 落 ADR-0005, 校准 vps.stage 锁语义(资源锁 vs 任务锁两层分离)。
+  - 顶部 ADR 列表加 ADR-0005, 标注 ADR-0001 §4 被 supersede
+  - §1 工人定位改: 抢到 task 立刻写 stage=running 占资源; 成功释放回 connectable; 失败保持 running 等维修
+  - §2 入口契约: 加"抢到 task 后占资源锁"段; 输出成功改 stage=connectable; 失败改 stage 保持 running
+  - §4 成功出口: 删去 "stage": "running" 描述(那是过时 v5 写法), 改用 _mark_done 行为说明
+  - §9 不变量重写: 拆"锁状态机不变量"(task vs stage 4 个对照) + "业务不变量"(xray 服务/配置/used_port_count 等)
+  - **代码改动**: workers/xray_worker.py 新增 _lock_vps_resource() static method; _mark_done 把 vps.stage 改 CONNECTABLE
+  - **DB/models.py:23-34**: 注释末尾加 ADR-0005 引用(语义本来就对, 文字补充)
 
 - v5.1 2026-06-08: T-07 实施时盘点既有代码 + 字段事实, 补 4 处:
   - §3 分支 A 步骤补 ② `write_default_config()`（裸装完 config 为空, start 会 exit=23）+ ⑥ `is_running()` 验证

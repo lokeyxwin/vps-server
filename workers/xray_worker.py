@@ -174,6 +174,10 @@ class XrayWorker:
         if creds is None:
             return
 
+        # 抢到 task 后立刻占 VPS 资源锁 (ADR-0005 §决策 §1)
+        # SSH 之前先标 running, 防止别的工人/部门同时操作这台机
+        self._lock_vps_resource(creds["vps_id"])
+
         ip = creds["ip"]
         logger.info(
             "开始处理 task_id=%s vps_id=%s ip=%s",
@@ -261,6 +265,20 @@ class XrayWorker:
             if rows == 0:
                 return None
             return candidate.id
+
+    @staticmethod
+    def _lock_vps_resource(vps_id: int) -> None:
+        """抢到 task 后, 把 VPS 资源锁标为 running (ADR-0005 §决策 §1).
+
+        VPS 资源锁 vs 任务并发锁:
+          - 资源锁 (vps_record.stage='running') 跨工人/部门, 告诉别的业务"这台机有人在用"
+          - 任务锁 (vps_task.status='in_progress' + locked_until) 同任务并发, 防多工人抢同一张任务单
+        两层职责不同, 抢到 task 后必须显式占 stage 锁.
+        """
+        with session_scope() as s:
+            vps = s.get(VPSRecord, vps_id)
+            if vps is not None:
+                vps.stage = VPSStage.RUNNING
 
     @staticmethod
     def _load_credentials(task_id: int) -> dict | None:
@@ -439,7 +457,8 @@ class XrayWorker:
                 task.last_error_msg = ""
             vps = s.get(VPSRecord, vps_id)
             if vps is not None:
-                vps.stage = VPSStage.RUNNING
+                # 完工释放资源锁回池子, 让 ProxyDeployWorker 等后续工人能拿这台机 (ADR-0005 §决策 §1)
+                vps.stage = VPSStage.CONNECTABLE
                 vps.xray_version = tail_result["xray_version"]
                 vps.used_port_count = tail_result["used_port_count"]
                 vps.xray_installed_at = vps.xray_installed_at or now

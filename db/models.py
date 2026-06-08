@@ -21,17 +21,20 @@ from db.base import Base
 
 
 class VPSStage:
-    """VPS 占用状态机（2 值，spec v4 拍板）。
+    """VPS 资源占用锁（2 值，spec v4 拍板 → ADR-0005 固化）。
 
     谁推进:
       SSHWorker 入库时    → 永远写 CONNECTABLE（spec v4 §5 不变量）
       抢到这台机的工人     → 写 RUNNING 锁住（XrayWorker / 未来巡检等）
       工人干完释放         → 改回 CONNECTABLE
-      工人失败            → 保持 RUNNING 锁住等人介入（spec v4 Q2 拍板）
+      工人失败            → 保持 RUNNING 锁住等"维修工人"或人工介入
 
     业务含义:
       CONNECTABLE = 此刻没工人在用 + 验证过能连，可被任意工人抢
       RUNNING     = 有任意工人正在用，别的工人挑机时跳过
+
+    详见 docs/adr/0005-vps-stage-as-resource-lock.md
+    （supersede ADR-0001 §决策 §4 "VPS 锁 = task 锁" 单层锁方案）。
     """
 
     CONNECTABLE = "connectable"
