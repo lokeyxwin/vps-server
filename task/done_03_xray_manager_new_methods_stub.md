@@ -1,11 +1,15 @@
-# T-03 XrayManager 加新方法占位(纳管所需) — v2 对齐 spec v5 + ADR-0004
+# T-03 XrayManager 加新方法占位(纳管所需) — v3 对齐既有代码事实
 
 **ID**: T-03
 **前置依赖**: 无(可与 T-01 / T-02 并行)
 **后续依赖**: T-07 XrayWorker 实现需要这些方法存在(实现可在 T-07 阶段填,本任务只建占位)
 
+> **v3 变化**(2026-06-08, 实施时盘点既有代码发现的偏差):
+> - **删 `is_enabled()` 占位条目**——既有 `xray/service.py::is_enabled` + `xray/manager.py::XrayManager.is_enabled` 早已存在且是真实现(走 `systemctl is-enabled xray`),并已被 `ensure_installed_and_running` 在用,ADR-0004 §1 要求的自启检查闭环在旧代码里已满足。任务单 v2 把它列成"v2 新增"是对既有代码盘点不全(ADR-0004 是今天写的,作者从 spec v5 + 新 XrayWorker 视角倒推工具清单时漏看旧 manager.py),本任务**不重做不拆改**,留给后续 legacy 清理统一处置。
+> - 本任务实际只造 1 个占位:`extract_existing_outbounds()`。
+
 > **v2 变化**(2026-06-08, 落 ADR-0004 + spec v5):
-> - 加 `is_enabled()` 占位（ADR-0004 §1 引出）
+> - 加 `is_enabled()` 占位（ADR-0004 §1 引出）—— **v3 撤回,见上**
 > - 删 `has_outbounds()` 占位（spec v5 §4 改用 outbound 协议判定, 不需要单独工具）
 > - 删 `test_internal()` 占位（搬到 `toolbox/proxy_check.py`, 走 T-08 任务单）
 > - `extract_existing_outbounds()` 返回字段加 `outbound_protocol`（区分 freedom vs socks 用,直进直出判定靠它）
@@ -23,7 +27,7 @@
 ### 改 `xray/manager.py`
 
 ```
-给 class XrayManager 加 2 个新方法占位(方法体仅 pass + docstring):
+给 class XrayManager 加 1 个新方法占位(方法体仅 pass + docstring):
 
   ① extract_existing_outbounds(self) -> list[dict]
      抠出现有出口配置(纳管核心)
@@ -48,12 +52,8 @@
      旧代码参考: xray/config.py::extract_port_bindings 或
               xray/manager.py::import_existing_bindings
 
-  ② is_enabled(self) -> bool                       ⭐ v2 新增 (ADR-0004 §1)
-     查 systemd 有没有给 xray 设开机自启
-     SSH 执行类似 systemctl is-enabled xray 的命令, 解析返回值
-     返回 True/False
-     旧代码参考: 当前 xray/service.py 里有 enable() 但没有 is_enabled(),
-              新造, 实现走 systemctl is-enabled (退码 0 = enabled)
+注: v2 曾列的 is_enabled() 占位条目 v3 撤回——旧 manager.py 早已存在
+    真实现且在用, 本任务不动它 (见顶部 v3 变化说明)。
 ```
 
 ### 不动
@@ -90,7 +90,7 @@ class XrayManager:
 
         ⭐ 抠信息类。空配置返回 [] 不抛错。
 
-        字段大类见 task/waiting_03_*.md 注释,
+        字段大类见 task/doing_03_*.md 注释,
         字段命名细节见 test/xray_worker/spec.md v5 §4 + §二.
 
         关键字段: outbound_protocol 决定走"直进直出"还是"纳管"路径
@@ -100,17 +100,6 @@ class XrayManager:
         实现等任务单 T-07 填 (可参考 xray.config.extract_port_bindings).
         """
         pass
-
-    def is_enabled(self) -> bool:
-        """查 systemd 有没有给 xray 设开机自启。
-
-        SSH 执行 `systemctl is-enabled xray`:
-            退码 0 + stdout 'enabled' → True
-            其他                       → False
-
-        实现等任务单 T-07 填。
-        """
-        pass
 ```
 
 ---
@@ -118,15 +107,15 @@ class XrayManager:
 ## 实现者完工标准
 
 ```
-- [ ] xray/manager.py 加 2 个新方法占位 (pass + docstring)
-- [ ] 每个 docstring 含"实现等任务单 T-07 填"标记
+- [ ] xray/manager.py 加 1 个新方法占位 extract_existing_outbounds (pass + docstring)
+- [ ] docstring 含"实现等任务单 T-07 填"标记
 - [ ] extract_existing_outbounds docstring 明确字段含义, 特别是 outbound_protocol
+- [ ] 不动其他方法 (含既有 is_enabled, 见顶部 v3 撤回说明)
 - [ ] 不动其他文件
 - [ ] uv run python -c "from xray.manager import XrayManager; \
         m = XrayManager.__dict__; \
-        assert 'extract_existing_outbounds' in m; \
-        assert 'is_enabled' in m" 不报错
-- [ ] commit 标题: chore(xray): XrayManager 加 extract_existing_outbounds + is_enabled 占位
+        assert 'extract_existing_outbounds' in m" 不报错
+- [ ] commit 标题: chore(xray): XrayManager 加 extract_existing_outbounds 占位 (is_enabled 旧代码已存在)
 ```
 
 ---
@@ -135,11 +124,44 @@ class XrayManager:
 
 ```
 □ git diff xray/manager.py:
-    - 2 个新方法存在 (extract_existing_outbounds / is_enabled)
-    - 每个方法体仅 pass + docstring
-    - 没有动其他方法
+    - extract_existing_outbounds 新方法存在
+    - 方法体仅 pass + docstring
+    - 没有动其他方法 (含既有 is_enabled)
     - **没有**加 has_outbounds / test_internal (按 v2 决定砍掉)
+    - **没有**新加 is_enabled 占位 (v3 撤回, 旧代码已有真实现)
 □ 实现者没乱填实现 (本任务**禁止**真实现, 留 T-07)
 □ 偏差但合理 → 抛给用户决策
 □ 偏差不合理 (实现了真逻辑) → 打回让实现者改成 pass
 ```
+
+---
+
+## 完工记录
+
+**完工时间**: 2026-06-08
+**实现窗口**: Claude (Opus 4.7)
+
+**偏差与处置**(已经用户裁定):
+
+实施时盘点既有代码,发现 `xray/service.py::is_enabled` + `xray/manager.py::XrayManager.is_enabled` 早已存在且是真实现(走 `systemctl is-enabled xray`),并已被 `ensure_installed_and_running` 在用——ADR-0004 §1 要求的自启检查闭环在旧代码里已满足。任务单 v2 把 is_enabled 列成"v2 新增"是对既有代码盘点不全(ADR-0004 今天写,作者从 spec v5 + 新 XrayWorker 视角倒推工具清单时漏看旧 manager.py)。
+
+用户裁定: 旧 is_enabled 业务上满足,不重做。本任务改 v3,只造 `extract_existing_outbounds()` 占位。
+
+**实际改动**:
+
+- `task/waiting_03_*.md` → `doing_*` → `done_*`
+- 任务单顶部追加 v3 变化说明 + 删除任务单内 is_enabled 相关占位条目(改动文件清单 / 实现轮廓 / 完工标准 / Claude 验收检查清单)
+- `xray/manager.py` 新加 `extract_existing_outbounds()` 占位(pass + docstring,docstring 含完整字段大类含 outbound_protocol 区分 freedom/socks)
+
+**验证**:
+
+```
+uv run python -c "from xray.manager import XrayManager; \
+    m = XrayManager.__dict__; \
+    assert 'extract_existing_outbounds' in m; \
+    print('ok')"
+→ ok
+```
+
+**遗留**: legacy 待清理(`XrayManager` 大量薄包装 `xray/service.py`)由 [[project-legacy_cleanup_pending]] 跟踪,不在本任务处理。
+

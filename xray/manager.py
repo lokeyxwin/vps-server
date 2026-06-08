@@ -102,6 +102,34 @@ class XrayManager:
             return []
         return xc.extract_port_bindings(xc.read_config(self.client))
 
+    def extract_existing_outbounds(self) -> list[dict]:
+        """抠出现有出口配置(纳管核心,⭐ 抠信息类)。
+
+        扫 xray 配置里的 inbound + 路由 + outbound,按"直进直出 vs 代理出口"分类,
+        返回 list[dict]。空配置 → 返回 [] 不抛错。
+
+        每条字段:
+            vps_port: int            服务器上的端口号 (inbound 监听端口)
+            inbound_protocol: str    入口协议: 通常是 "socks" / "socks5"
+            inbound_user: str        入口账号 (noauth 时空串)
+            inbound_pwd: str         入口密码 (明文,内部用;noauth 时空串)
+            outbound_protocol: str   ⭐ outbound 协议,决定走"直进直出"还是"纳管":
+                                       "freedom"          → 直进直出,XrayWorker 跳过纳管
+                                       "socks" / "socks5" → 代理出口,XrayWorker 走内 ping + 写库/remove
+                                       其他                → 兜底按"非直进直出"处理
+            upstream_host: str       上游入口域名/IP (freedom 时空串)
+            upstream_port: int       上游入口端口 (freedom 时 0)
+            upstream_user: str       上游账号 (freedom 时空串)
+            upstream_pwd: str        上游密码 (freedom 时空串)
+            egress_ip: str           出口 IP (从 outbound 备注读,无则 "")
+            egress_country: str      出口国家 (同上,无则 "")
+
+        字段命名细节见 test/xray_worker/spec.md v5 §4 + §二。
+
+        实现等任务单 T-07 填(可参考 xray.config.extract_port_bindings)。
+        """
+        pass
+
     def test_internal_socks(
         self, port: int = xc.DEFAULT_PORT, user: str = "", pwd: str = "",
     ) -> dict:
