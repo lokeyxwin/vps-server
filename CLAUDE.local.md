@@ -234,6 +234,20 @@ xxx_status_message: str       # 人类可读的状态附加信息
 - 业务层 upsert：按唯一键查 → 存在则 UPDATE，不存在则 INSERT
 - 双 UniqueConstraint 防错绑
 
+### DB 增量写入 / 字段所有权（2026-06-08 追加）
+
+同一条业务记录必须按唯一键做 **insert-or-patch**：
+- DB 里没有这条记录 → INSERT 新行。
+- DB 里已有这条记录 → 只能在旧行上增量 UPDATE 本次工人负责的字段。
+- 禁止拿到记录 A 后重新构造一个 A 去覆盖整行；禁止 `merge` / 整对象替换 /
+  把没读取到的字段写回空值、默认值或旧快照值。
+- 禁止跨工人覆盖字段：SSHWorker 写入的 VPS 基础字段（ip / port / username /
+  password_encrypted / os / expire_date / provider_domain）不是 XrayWorker 的写入范围；
+  XrayWorker 只能补丁式更新 stage 锁、xray_version、xray_* 时间、used_port_count
+  等 xray 生命周期字段。
+- 新 worker 写库前必须先写清楚“这次拥有并允许更新哪些字段”；不在白名单里的字段，
+  就算内存对象里有值，也不能写回 DB。
+
 ### Reconcile 模式
 
 **服务器是真相，DB 是它的影子**。每次业务先看实际状态再决定动作（参考 `XrayManager.ensure_installed_and_running`）。
@@ -589,4 +603,7 @@ PROBE_VPS = {
   - §4 删"只 import kits/" → "只 import xray/"
   - §7 删"工具箱 kits/install_xray" → "XrayManager"
   - §12 工具说明对应改成 XrayManager 新方法
+- v4 2026-06-08 追加 DB 增量写入 / 字段所有权规则：
+  - 命中已有记录只能按字段白名单 patch，禁止整行覆盖。
+  - 明确 SSHWorker 与 XrayWorker 对 `vps_record` 的字段写入边界。
 - 后续修订请按 CLAUDE.md §5.1 落文件前列 diff 给用户审
