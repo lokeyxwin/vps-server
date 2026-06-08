@@ -43,6 +43,5 @@ test.bak/
 *.bak
 *.bak-*
 
-# Claude Code 本地配置 / hook 运行态
-.claude/settings.local.json
-.claude/hook-state/
+# Claude Code 本地配置 / hook 脚本 / 运行态(整目录不进库)
+.claude/
