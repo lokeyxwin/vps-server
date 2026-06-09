@@ -96,5 +96,5 @@ XRAY_DEFAULT_PORT = 18440
 CONNECTIVITY_TEST_TIMEOUT = 20
 
 # ipinfo.io 免费 50k 次/月（注册 token 后），无 token 也能查但限额很小
-IPINFO_TOKEN = os.environ.get("IPINFO_TOKEN", "")
+IPINFO_TOKEN = os.environ.get("IPINFO_TOKEN", "")  # 没设时填:<请放入你的凭据>
 IPINFO_TIMEOUT = 8
