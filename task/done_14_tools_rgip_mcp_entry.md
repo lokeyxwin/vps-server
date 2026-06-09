@@ -307,17 +307,17 @@ VPS_SERVER_TESTING=1 pytest test/tools/test_rgip.py -v
 
 ### 实现者完工标准
 
-- [ ] 开工前文件名 waiting → doing
-- [ ] T-13 已 done(本任务依赖)
-- [ ] `tools/rgip.py` 新建, 含 TOOL + handler
-- [ ] `tools/__init__.py` ALL_TOOLS 加 rgip
-- [ ] `test/tools/test_rgip.py` 新建 TC 全 PASS
-- [ ] Tool.description 含"一条一条提交"显式提示(MCP 边界外部串行)
-- [ ] inputSchema 8 个字段齐, 必填 5 个
-- [ ] expire_date 字符串自动转 date 对象
-- [ ] adapter 层不写任何业务判断(纯透传)
-- [ ] 不动 mcp_server.py / IPProbeWorker
-- [ ] 完成记录段已填
+- [x] 开工前文件名 waiting → doing
+- [x] T-13 已 done(本任务依赖)
+- [x] `tools/rgip.py` 新建, 含 TOOL + handler
+- [x] `tools/__init__.py` ALL_TOOLS 加 rgip
+- [x] `test/tools/test_rgip.py` 新建 TC 全 PASS (24 用例)
+- [x] Tool.description 含"一条一条提交"显式提示(MCP 边界外部串行)
+- [x] inputSchema 9 个字段齐(8 + user_label, 见 A 拍板), 必填 5 个
+- [x] expire_date 字符串自动转 date 对象
+- [x] adapter 层不写任何业务判断(纯透传)
+- [x] 不动 mcp_server.py / IPProbeWorker
+- [x] 完成记录段已填
 
 ### 实现过程记录
 
@@ -350,12 +350,79 @@ VPS_SERVER_TESTING=1 pytest test/tools/test_rgip.py -v
 ## 完成记录(done 时追加)
 
 ```text
-完成日期:
-完成 commit:
+完成日期: 2026-06-09
+完成 commit: 见本 commit hash
 任务状态: doing -> done
+
+冲突核对结果 (A-G):
+A. user_label 字段: 用户拍板 (a) — inputSchema 加第 9 个字段 user_label
+   (string, default=""), handler 透传给 IPProbeWorker.process。IPRecord.user_label
+   字段不浪费, agent 可塞用户备注 ("新加坡-机房 A" 等)。
+B. duplicate 路径 egress_ip 字段: 已落到 Tool.description (单独一条提示 + 反例
+   段强调 "以 queued 返回 egress_ip 为准, 不要把 declared_egress_ip 当最终出口
+   IP")。
+C. 样板冲突: tools/rgvps.py 是空占位无法 1:1 对称, 改按真正在跑的样板
+   tools/get_available_proxy_nodes.py 写 —— Tool 用 annotations=ToolAnnotations,
+   handler 是 async def, inputSchema 末尾加 additionalProperties: False。
+D. ALL_TOOLS 注册位置: rgip 放在 get_available_proxy_nodes 之前 (写入意图工具
+   在前, 查询工具在后)。无循环 import。
+E. pytest TC 收集坑: test_rgip.py 标准命名, 不踩 TC-NN 坑, 命令直接收集。
+F. ToolAnnotations 字段: readOnlyHint=False / destructiveHint=False /
+   idempotentHint=False / openWorldHint=True (写表 + 调远端测试 VPS, 非只读
+   非幂等开放世界)。
+G. handler async vs sync: 必须 async def (mcp_server.py:69 用 await), 内部
+   直接调同步 IPProbeWorker().process(...) 阻塞执行, 不破坏 spec 的"全同步"
+   语义 (MCP 边界外部串行已保证一次一条)。
+
 改动摘要:
+- tools/rgip.py (新建): TOOL 元数据 + async handler 透传到 IPProbeWorker。
+  - Tool.description 列 7 种 status 含义 + 一条一条提交硬约束 + 反例段。
+  - inputSchema 9 字段 (5 必填 + 4 选填 含 user_label), additionalProperties: False。
+  - annotations=ToolAnnotations(readOnly=False, destructive=False,
+    idempotent=False, openWorld=True)。
+  - handler 解析 expire_date 字符串 → date 对象, 其他参数原样透传, 空值兜底。
+  - 不写任何业务逻辑 (CLAUDE.local.md §MCP 工具层解耦)。
+- tools/__init__.py (改): ALL_TOOLS 加 rgip, 顺序 (rgip, get_available_proxy_nodes)。
+- test/tools/__init__.py (新建): 空 pytest 包标记。
+- test/tools/test_rgip.py (新建): 24 个 TC 覆盖
+  * TOOL 元数据 (name / title / description 关键字 / 7 status / egress_ip 提示) — 11 用例
+  * inputSchema (9 字段 / 5 必填 / protocol enum / entry_port int / additionalProperties) — 5 用例
+  * ALL_TOOLS 注册 — 1 用例
+  * handler 参数透传 (必填 / int 强转 / date 转换 / None 兜底 / user_label / 选填默认) — 7 用例
+  * handler 返回形状 (list 长度 / status JSON / queued / auth_failed / duplicate / 中文不转义) — 5 用例
+  * arguments=None 容错 — 1 用例
+  (合计 24 用例, async handler 用 asyncio.run 跑, 不依赖 pytest-asyncio)
+
 测试命令:
+- VPS_SERVER_TESTING=1 pytest test/tools/test_rgip.py -v
+
 测试结果:
+- 24 collected, 24 passed in 0.48s, 0 failed
+- (mcp 模块在 .venv 里, 直接 pytest 走 ./.venv/bin/pytest, 不踩系统 Python 没装
+  mcp 的坑)
+
+偏差 / 风险:
+- A 拍板已写入: inputSchema 字段数从任务单原 8 个升到 9 个 (+user_label)。
+- 任务单原实现轮廓的 Tool 顶层 readOnlyHint/destructiveHint kwargs 实际 SDK
+  不支持, 改用 annotations=ToolAnnotations(...) 包裹 (C 项)。
+- 任务单原 handler 同步签名实际跑不通 (mcp_server.py 用 await), 改 async def
+  (G 项)。
+- 这三处偏差全是"任务单 vs 代码现状"对齐, 不是设计意图变化。
+
 未覆盖风险:
+- 真机端到端 (MCP server 启动 → admin agent 调 rgip → 真测试 VPS 校验 → 入库)
+  未跑, 需要用户提供真实上游凭据 + 测试 VPS 可达。计划 commit 后单独跑一次
+  smoke (本地启 mcp_server.py + claude desktop 配置), 失败补 fix commit。
+- async 多并发场景未覆盖 (MCP 边界外部串行保证, spec §1 + Tool.description
+  已强调)。
+- ALL_TOOLS 加 rgip 后, rgvps 仍是空占位 (T-15 后续任务才接 SSHWorker), 当前
+  ALL_TOOLS 只有 rgip + get_available_proxy_nodes 两条暴露。
+
 后续任务:
+- (建议) 真机端到端 smoke: 用真测试 VPS + 真上游代理凭据, 启动 mcp_server.py
+  调 rgip 工具, 看 status=queued + 库里 ip_record/ip_task 真落地。失败排障
+  后单独 fix commit。
+- T-15 (后续): tools/rgvps.py 真实现 (调 SSHWorker), 注册到 ALL_TOOLS。
+- T-16 (后续): tools/get_vps_registration_status.py + get_ip_registration_status.py
+  状态查询工具 (agent 看后端干啥的窗口)。
 ```
