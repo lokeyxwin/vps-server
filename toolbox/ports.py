@@ -28,22 +28,44 @@ class PortProbeError(RuntimeError):
 
 
 # ============================================================
-# 业务永远要排除的常见端口
+# 业务永远要排除的常见端口（⭐ 即 ADR-0002 §3 / ADR-0006 §6 的 EXCLUDED_PORTS）
 # ============================================================
 # 这些端口业务永远不该挑作为代理出口，即使 ss -tln 显示"未占用"
-# （某些服务可能临时停了但即将启动；或者业务约定保留）：
-#   22    SSH
-#   25    SMTP
-#   53    DNS
-#   80    HTTP
-#   443   HTTPS
-#   1082  HTTP proxy（部分发行版默认）
-#   3306  MySQL
-#   8080  HTTP alt
-#   18789 项目历史约定保留
-#   54321 PostgreSQL 备用端口
+# （某些服务可能临时停了但即将启动；或者业务约定保留）。
+#
+# 0-1023 well-known 段不在本清单逐个列：ProxyDeployWorker 用
+# compute_available_ports(used, 1024, 65535, ...) 时已通过范围参数自然排除；
+# 本清单只列 1024+ 中要排除的常见应用服务端口 + 少量历史保留的 well-known。
+#
+# 22/25/53/80/443 留作防御（兜底某些场景误用 start_port<1024 时不挑这些）。
+#
+# 端口含义：
+#   22     SSH
+#   25     SMTP
+#   53     DNS
+#   80     HTTP
+#   443    HTTPS
+#   1080   SOCKS5（主流默认）
+#   1082   HTTP proxy（部分发行版默认）
+#   3306   MySQL
+#   5432   PostgreSQL
+#   6379   Redis
+#   8080   HTTP alt
+#   9090   Prometheus
+#   9100   NodeExporter
+#   11211  Memcached
+#   18789  项目历史约定保留
+#   27017  MongoDB
+#   54321  PostgreSQL 备用端口
+#
+# ⚠️ 不允许在 config.py 另起 EXCLUDED_PORTS 跟本常量双轨（CLAUDE.local.md §反模式）。
+# 调用方：ProxyDeployWorker._pick_port (走 compute_available_ports 默认 exclude)
 COMMON_RESERVED_PORTS: frozenset[int] = frozenset(
-    {22, 25, 53, 80, 443, 1082, 3306, 8080, 18789, 54321}
+    {
+        22, 25, 53, 80, 443,
+        1080, 1082, 3306, 5432, 6379, 8080, 9090, 9100,
+        11211, 18789, 27017, 54321,
+    }
 )
 
 

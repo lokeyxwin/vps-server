@@ -135,25 +135,39 @@ class VPSRecord(Base):
 # ============================================================
 
 class ProxyStatus:
-    """proxy_record 的状态。固定大小事实表（一台 VPS 最多 10 条），
-    用 status 字段反映「这条端口绑定当前在不在用」。"""
+    """proxy_record.status（3 档枚举, ADR-0006 §决策 §7）。
 
-    USING = "using"      # 当前在用（IP 没过期）
-    EXPIRED = "expired"  # 对应 IP 已过期，等被新 IP 顶替（行复用）
+    谁推进:
+      ProxyDeployWorker 收尾 → 写 USING 或 PENDING_FW (内/外 ping 结果决定)
+      封存的 ExpiryWorker / CleanupWorker (未来) → 写 INACTIVE
+
+    业务含义:
+      USING       = 内通 + 外通, 完全可用
+      PENDING_FW  = 内通但外不通, 代理已配好等用户去 VPS 厂商面板放行端口/安全组
+      INACTIVE    = 上游过期 / 主动停用 (吸收旧 EXPIRED 语义)
+    """
+
+    USING       = "using"
+    PENDING_FW  = "pending_fw"
+    INACTIVE    = "inactive"
 
 
 class ProxyRecord(Base):
     """VPS 端口绑定记录（事实表）。
 
-    每行 = 一台 VPS 上一个端口（18441-18450 范围）目前挂着哪条上游代理。
-    一台 VPS 最多 10 条（端口范围决定），固定大小：过期不删行，改 status='expired'
-    等被下一条 IP 顶替（直接 update 该行）。
+    每行 = 一台 VPS 上一个出口端口当前挂着哪条上游代理。
+    一台 VPS 上限 `config.MAX_PORTS_PER_VPS` 条（默认 3, ADR-0006 §3）。
+    端口策略：高位随机, 避开 EXCLUDED_PORTS（即 toolbox.ports.COMMON_RESERVED_PORTS,
+    见 ADR-0002 §3 + ADR-0006 §6）+ 默认入口端口 + 该 VPS 已用端口；
+    纳管端口原样接管不动（ADR-0002 §2）。
 
-    数据来源（首期）：rgvps 流程的端口审计阶段，从 xray config 抠出已部署
-    的客户端 inbound 绑定，逐条 from_extracted_binding 落库。
-    未来 rgIP 业务部署新绑定时也走这张表。
+    数据来源：
+      - 纳管（XrayWorker 统一收尾）：从 xray config 抠出已部署的客户端 inbound
+        绑定, 逐条 from_extracted_binding 落库。
+      - 新部署（ProxyDeployWorker）：把 ip_record 挂到 vps 时新建一行, 走
+        from_new_deployment。
 
-    密码字段 inbound_pwd_encrypted 同 VPSRecord 约定：直接拿到的是密文 bytes，
+    密码字段 inbound_pwd_encrypted 同 VPSRecord 约定：直接拿到的是密文 bytes,
     明文要走 get_inbound_pwd()。
     """
 

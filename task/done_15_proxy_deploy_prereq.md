@@ -206,13 +206,44 @@ PYTHONPATH=. pytest test/proxy_deploy_worker/TC-01_proxy_status_enum.py -v
 ## 完成记录(done 时追加)
 
 ```text
-完成日期:
-完成 commit:
-任务状态: doing -> done
+完成日期: 2026-06-09
+完成 commit: (跟本任务单 waiting→done 同 commit, 见 git log)
+任务状态: waiting -> doing -> done
+
+实现者完工标准 (全 ✅):
+- [x] 任务文件改为 doing → done
+- [x] db/models.py::ProxyStatus 改为 3 档 (USING / PENDING_FW / INACTIVE)
+- [x] db/models.py::ProxyRecord 类注释更新 (对齐 ADR-0006 §3 §6)
+- [x] config.py 加 MAX_PORTS_PER_VPS = 3
+- [x] 核查 toolbox/ports.COMMON_RESERVED_PORTS 是否覆盖 EXCLUDED_PORTS 全集 → 不全, 补 7 个
+- [x] 没有另起 config.py::EXCLUDED_PORTS (防双轨)
+- [x] TC-01 全过 (6/6)
+- [x] 完成记录段已填
+
 改动摘要:
-COMMON_RESERVED_PORTS 核查结论: <已覆盖 / 补全了 X 个端口>
+- db/models.py::ProxyStatus 2 档 → 3 档 (using / pending_fw / inactive, 旧 EXPIRED→INACTIVE 吸收语义)
+- db/models.py::ProxyRecord 类注释更新 (对齐 ADR-0006 §3 §6: 上限 MAX_PORTS_PER_VPS 条 + 高位随机避开 EXCLUDED_PORTS, 删 stale 的 "18441-18450 / 最多 10 条")
+- config.py 新增 MAX_PORTS_PER_VPS = 3 + 注释引用 EXCLUDED_PORTS 复用 toolbox/ports 不双轨
+- toolbox/ports.py::COMMON_RESERVED_PORTS 补 7 个常见应用端口 + docstring 标 "⭐ 即 ADR-0006 §6 / ADR-0002 §3 EXCLUDED_PORTS"
+- 新建 test/proxy_deploy_worker/TC-01_proxy_status_enum.py (3 个 TestCase, 6 个子测试)
+
+COMMON_RESERVED_PORTS 核查结论:
+- 原 10 个: 22 / 25 / 53 / 80 / 443 / 1082 / 3306 / 8080 / 18789 / 54321
+- 补 7 个: 1080 SOCKS5 / 5432 PostgreSQL / 6379 Redis / 9090 Prometheus / 9100 NodeExporter / 11211 Memcached / 27017 MongoDB
+- 补后共 17 个 (保守清单, 不可能穷尽; 业务跑出来撞到再补)
+
 测试命令:
+- PYTHONPATH=. uv run pytest test/proxy_deploy_worker/TC-01_proxy_status_enum.py -v
+- PYTHONPATH=. uv run pytest test/xray_worker/TC-07_tail_takeover_ok.py -v  (回归)
+
 测试结果:
+- TC-01: 6 passed in 0.24s ✅
+- TC-07 (回归): 1 passed in 0.28s ✅ (ProxyStatus.USING 改名零影响)
+
 未覆盖风险:
-后续任务: T-16 (ProxyDeployWorker 实现)
+- proxy_record 表 dev SQLite 有 1 行历史 status='using' 数据 (XrayWorker 2026-06-08 纳管真实记录 vps_id=1 port=11080 egress=198.51.100.10 SG), 不受 EXPIRED→INACTIVE 改名影响, 用户已确认保留 (会话决策 ①a)
+- MAX_PORTS_PER_VPS=3 是经验值, T-16 真机时如不够再调一处常量
+- COMMON_RESERVED_PORTS 17 个端口是保守清单, 不可能穷尽
+
+后续任务: T-16 (ProxyDeployWorker 实现 + 12-15 个 TC)
 ```
