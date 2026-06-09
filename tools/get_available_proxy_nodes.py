@@ -14,7 +14,7 @@ import json
 
 from mcp.types import TextContent, Tool, ToolAnnotations
 
-from services.proxy_query import list_available_proxies
+from db.queries import list_available_proxies
 
 
 TOOL = Tool(

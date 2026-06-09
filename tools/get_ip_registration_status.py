@@ -16,7 +16,7 @@ import json
 
 from mcp.types import TextContent, Tool, ToolAnnotations
 
-from services.registration_query import query_ip_status
+from db.queries import query_ip_status
 
 
 TOOL = Tool(

@@ -1,23 +1,28 @@
-"""注册进度查询业务: query_vps_status / query_ip_status (read-only).
+"""MCP 工具调的所有业务函数集合 (ADR-0008 §决策 §2).
 
-给 MCP 状态查询工具 (get_vps_registration_status / get_ip_registration_status)
-当业务后端用. handler 不写 SQL, 走这里.
+读写都在: 本文件层面不区分 read-only / write, 权限隔离靠 MCP admin/user 分层
+(CLAUDE.local.md §14.1) 兜.
 
-位置说明 (ADR-0007 §影响清单 + 实现者拍板):
-  跟现有 services/proxy_query.py 同位, read-only 查询保留在 services/ 下.
-  虽然 ADR-0001 §决策 §5 写"新代码不 import services/", 但 read-only 查询语义
-  跟"业务编排"不同, ADR-0007 §影响清单已标注 "services/proxy_query 暂保留",
-  本模块沿用同一姿态. 后续单独评估是否搬到 db/queries/.
+本任务 (T-18) 范围内只搬 3 个 read-only 查询函数, 内容跟原 services 一致, 签名不变.
+未来加写入函数 (update_*) 时, 必须遵循 CLAUDE.local.md §14.3 ABCD 4 条规则:
+主键精准 / 白名单字段 patch / 整对象不允许覆盖 / 工具命名反映约束.
 
-输出契约: test/mcp_tools/spec.md §6.3 (vps) / §6.4 (ip)
+任务表 (vps_task / ip_task) 永不暴露写入函数 (CLAUDE.local.md §14.2).
+
+谁调我: tools/*.py handler (MCP 协议适配层).
 """
 
 from __future__ import annotations
+
+from datetime import date
+
+from sqlalchemy import or_
 
 from db.models import (
     IPRecord,
     IPTask,
     ProxyRecord,
+    ProxyStatus,
     TaskStatus,
     VPSRecord,
     VPSTask,
@@ -26,7 +31,7 @@ from db.session import session_scope
 from log import get_logger
 
 
-logger = get_logger("services.registration_query")
+logger = get_logger("db.queries")
 
 
 # ============================================================
@@ -39,7 +44,7 @@ def query_vps_status(
 ) -> dict:
     """查 VPS 装机进度. vps_id 或 task_id 二选一(vps_id 优先).
 
-    返回形状 (spec §6.3):
+    返回形状 (test/mcp_tools/spec.md §6.3):
       {"status": "ok",
        "vps":  {"id", "ip", "stage", "xray_version", "is_active"},
        "task": {"id", "status", "last_error_code", "last_error_msg",
@@ -53,7 +58,6 @@ def query_vps_status(
         return {"status": "not_found"}
 
     with session_scope() as s:
-        # 解析 vps_id (若只给 task_id)
         if vps_id is None:
             task = s.get(VPSTask, task_id)
             if task is None:
@@ -64,7 +68,6 @@ def query_vps_status(
         if vps is None:
             return {"status": "not_found"}
 
-        # 最新一条 task (无论 status)
         latest_task = (
             s.query(VPSTask)
             .filter(VPSTask.vps_id == vps_id)
@@ -109,7 +112,7 @@ def query_ip_status(
 ) -> dict:
     """查 IP 配置进度. ip_id 或 task_id 二选一(ip_id 优先).
 
-    返回形状 (spec §6.4, ⭐ 一条龙):
+    返回形状 (test/mcp_tools/spec.md §6.4, ⭐ 一条龙):
       {"status": "ok",
        "ip":   {"id", "egress_ip", "country_code", "status", "expire_date"},
        "task": {"id", "status", "last_error_code", "last_error_msg",
@@ -124,7 +127,6 @@ def query_ip_status(
         return {"status": "not_found"}
 
     with session_scope() as s:
-        # 解析 ip_id (若只给 task_id)
         if ip_id is None:
             task = s.get(IPTask, task_id)
             if task is None:
@@ -157,7 +159,6 @@ def query_ip_status(
                 ),
             }
 
-            # task.status=done 时拿 proxy_record + vps (一条龙)
             if latest_task.status == TaskStatus.DONE:
                 proxy_node_dict = _build_proxy_node(s, ip_id)
 
@@ -205,3 +206,82 @@ def _build_proxy_node(s, ip_id: int) -> dict | None:
         "inbound_pwd": proxy.get_inbound_pwd(),
         "status": proxy.status,
     }
+
+
+# ============================================================
+# 可用代理节点查询
+# ============================================================
+
+def list_available_proxies(country_code: str = "") -> list[dict]:
+    """列出所有可用的代理节点.
+
+    "可用" 定义:
+    - proxy.status = USING
+    - proxy.ip_id IS NOT NULL (rgvps 端口审计反推的孤儿 binding 不算)
+    - vps.is_active = 1 且 (vps.expire_date 为空 或 vps.expire_date >= today)
+    - ip.is_active = 1 且 (ip.expire_date 为空 或 ip.expire_date >= today)
+
+    参数:
+        country_code: 可选, 按国家代码过滤(如 "SG" / "US"), 空串=不过滤
+
+    返回 list[dict], 每个 dict 形如:
+        {
+            "proxy_id": int,
+            "vps_id": int,
+            "ip_id": int,
+            "protocol": "socks5",
+            "host": "203.0.113.10",        # VPS 入口 IP
+            "port": 18441,                    # VPS 上的端口
+            "username": "xxx",                # inbound 账号
+            "password": "yyy",                # inbound 明文密码
+            "egress_ip": "198.51.100.10",       # 真正出口 IP
+            "country_code": "SG",
+            "country_name": "Singapore",
+            "city": "Singapore",
+        }
+
+    无匹配返回 [].
+    """
+    today = date.today()
+    cc_filter_msg = f" country_code={country_code!r}" if country_code else ""
+    logger.info("查询可用代理节点: today=%s%s", today, cc_filter_msg)
+
+    with session_scope() as s:
+        query = (
+            s.query(ProxyRecord, VPSRecord, IPRecord)
+            .join(VPSRecord, ProxyRecord.vps_id == VPSRecord.id)
+            .join(IPRecord, ProxyRecord.ip_id == IPRecord.id)
+            .filter(ProxyRecord.status == ProxyStatus.USING)
+            .filter(ProxyRecord.ip_id.isnot(None))
+            .filter(VPSRecord.is_active == 1)
+            .filter(or_(VPSRecord.expire_date.is_(None), VPSRecord.expire_date >= today))
+            .filter(IPRecord.is_active == 1)
+            .filter(or_(IPRecord.expire_date.is_(None), IPRecord.expire_date >= today))
+            .order_by(IPRecord.country_code, VPSRecord.ip, ProxyRecord.vps_port)
+        )
+
+        if country_code:
+            query = query.filter(IPRecord.country_code == country_code)
+
+        rows = query.all()
+
+        results = [
+            {
+                "proxy_id": p.id,
+                "vps_id": v.id,
+                "ip_id": ip.id,
+                "protocol": p.protocol,
+                "host": v.ip,
+                "port": p.vps_port,
+                "username": p.inbound_user,
+                "password": p.get_inbound_pwd(),
+                "egress_ip": ip.egress_ip,
+                "country_code": ip.country_code,
+                "country_name": ip.country_name,
+                "city": ip.city,
+            }
+            for p, v, ip in rows
+        ]
+
+    logger.info("查询完成: 命中 %d 条可用节点", len(results))
+    return results

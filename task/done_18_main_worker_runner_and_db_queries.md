@@ -595,12 +595,67 @@ wait $PID
 > 任务完成后再填。waiting 阶段不要预填。
 
 ```text
-完成日期:
-完成 commit:
+完成日期: 2026-06-09
+完成 commit: (本 commit, T-18 完整功能 commit)
 任务状态: doing -> done
+
 改动摘要:
+- main.py 完全重写: 删 rgvps / xrayinit / rgip 3 个 services CLI 子命令,
+  改为 worker-loop 单子命令; 含 SIGTERM/SIGINT handler + 优雅退出 + worker
+  异常 catch + 顶部 docstring 重写指向 ADR-0008 二进程心智模型.
+- config.py 加 POLL_INTERVAL_SECONDS = 2 (worker-loop idle sleep 秒数).
+- 新建 db/queries.py: query_vps_status / query_ip_status /
+  list_available_proxies 3 函数, 内容从 services 搬, 签名不变;
+  顶部 docstring 写明"读写都在 + 未来 update_* 按 §14.3 ABCD 规则加".
+  proxy_query 原聚合 `from db import` 改为 `from db.models import` +
+  `from db.session import session_scope` 避免 db 包内循环.
+- tools/ 3 个文件改一行 import: from services.xxx → from db.queries.
+- services/registration_query.py + services/proxy_query.py 已 git rm.
+- 测试新建: test/main/ 5 个 TC + test/db/ 4 个 TC + 2 个 __init__.py.
+
+新增测试文件:
+- test/main/__init__.py
+- test/main/TC-01_argparse.py (3 个 case: 无参非0退码 / worker-loop --help 0 / 顶层 --help 0)
+- test/main/TC-02_signal_handlers.py (2 个 case: 装 handler 后非默认 / handler 置 _stop)
+- test/main/TC-03_loop_exits_on_stop.py (_stop=True → 立即退出不 sleep)
+- test/main/TC-04_loop_busy_no_sleep.py (2 个 case: busy 不 sleep / idle 该 sleep)
+- test/main/TC-05_loop_resilient_to_worker_error.py
+  (2 个 case: xray 抛错不杀 loop + log warning / proxy 抛错同)
+- test/db/__init__.py
+- test/db/TC-01_queries.py (3 函数签名 + 空 DB 形状,
+  fixture 用 in-memory SQLite + monkeypatch session_scope, 9 个 case)
+- test/db/TC-02_no_services_residue.py (2 个 case: 2 文件 git rm)
+- test/db/TC-03_no_services_imports.py
+  (1 个 case: 排除 services/__pycache__/.venv/.git/test/test.bak, grep import)
+- test/db/TC-04_tools_use_db_queries.py (3 个 case: 3 tools 改 import)
+
 测试命令:
+PYTHONPATH=. VPS_SERVER_TESTING=1 uv run pytest \
+  test/main/TC-*.py test/db/TC-*.py \
+  test/mcp_tools/TC-*.py test/ssh_worker/TC-*.py \
+  test/proxy_deploy_worker/TC-*.py test/xray_worker/TC-*.py \
+  test/ip_probe_worker/TC-*.py -v
+
 测试结果:
+- 新建 9 个 TC 文件 25 个 case 全 PASS.
+- 全套回归 204 passed, 2 skipped (原本就 skip 的真机 TC), 0 fail.
+
+启动验证:
+- main.py --help 看到 worker-loop 子命令.
+- 启动 + 2s 后 SIGTERM:
+    17:59:08 [INFO] main.worker_loop: main.worker-loop 启动: poll_interval=2s,
+        workers=[XrayWorker, ProxyDeployWorker]
+    17:59:09 [INFO] main.worker_loop: main.worker-loop 收到信号 15, 准备优雅退出
+    17:59:10 [INFO] main.worker_loop: main.worker-loop 已退出
+- exit code 0.
+
 未覆盖风险:
+- worker-loop 串行调度 XrayWorker → ProxyDeployWorker, 业务规模小够用; 未来加多
+  worker 类型或并发挑战时可能要拆并发 (ADR-0008 §决策 §1 已说留下波).
+- mcp_server.py instructions "Read-only" 跟实际注册 register_vps / register_ip
+  不一致, 属 ADR-0007 §8 stale 问题, 本任务不动 (ADR-0008 §决策 §3.1 留下波).
+- 部署文档 (systemd / supervisor) 未写, 本任务范围外, ADR-0008 §决策 §1 明确说
+  "部署关注点跟架构决策无关".
+
 后续任务: admin/user 真正拆 MCP server (ADR-0007 §8 + ADR-0008 §3.1 留下波, 后续单独 ADR)
 ```
