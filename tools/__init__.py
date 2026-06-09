@@ -8,9 +8,10 @@
 `ALL_TOOLS` 把所有工具汇总成 (Tool, handler) 对的列表, mcp_server.py
 注册时直接 for-loop。
 
-工具暴露分类(见 ADR-0001 §决策 §5):
-- 写入意图工具: rgip (rgvps 待实现)
+工具暴露分类(见 ADR-0001 §决策 §5 + ADR-0007 §决策 §3):
+- 写入意图工具: register_vps / rgip(T-17 改名 register_ip)
 - 数据查询工具: get_available_proxy_nodes
+- (状态查询工具 get_vps/ip_registration_status 由 T-17 补)
 
 约束:
 - 不在 tools/ 层写业务逻辑——只做"协议转换": 从 MCP arguments 调
@@ -20,12 +21,15 @@
 
 from tools.get_available_proxy_nodes import TOOL as _get_available_proxy_nodes_tool
 from tools.get_available_proxy_nodes import handler as _get_available_proxy_nodes_handler
+from tools.register_vps import TOOL as _register_vps_tool
+from tools.register_vps import handler as _register_vps_handler
 from tools.rgip import TOOL as _rgip_tool
 from tools.rgip import handler as _rgip_handler
 
 
 ALL_TOOLS = [
     # 写入意图工具(意图工具在前)
+    (_register_vps_tool, _register_vps_handler),
     (_rgip_tool, _rgip_handler),
     # 数据查询工具(查询工具在后)
     (_get_available_proxy_nodes_tool, _get_available_proxy_nodes_handler),

@@ -222,26 +222,53 @@ PYTHONPATH=. pytest test/ssh_worker/TC-06_register_vps_mcp_entry.py -v
 
 > ⚠️ 全部打勾才允许改 `doing` → `done`
 
-- [ ] 开工前已将任务文件改为 `doing`
-- [ ] `tools/rgvps.py` 已 `git rm`
-- [ ] `tools/register_vps.py` 已实现完
-- [ ] `tools/__init__.py` ALL_TOOLS 含 `register_vps`(仅加一条, 不动其他)
-- [ ] TC-06 所有子测试 PASS(含 TC-06-g/h 防回退)
-- [ ] `TOOL.name == "register_vps"` 三处对齐(文件名 stem / `TOOL.name` / `tools/__init__.py` import 别名前缀)
-- [ ] description 列 6 种 status 全(对齐 spec.md §6.1)
-- [ ] 完成记录段已填(测试结果原样贴)
+- [x] 开工前已将任务文件改为 `doing`
+- [x] `tools/rgvps.py` 已 `git rm`
+- [x] `tools/register_vps.py` 已实现完
+- [x] `tools/__init__.py` ALL_TOOLS 含 `register_vps`(仅加一条, 不动其他)
+- [x] TC-06 所有子测试 PASS(含 TC-06-g/h 防回退)
+- [x] `TOOL.name == "register_vps"` 三处对齐(文件名 stem / `TOOL.name` / `tools/__init__.py` import 别名前缀)
+- [x] description 列 6 种 status 全(对齐 spec.md §6.1)
+- [x] 完成记录段已填(测试结果原样贴)
 
 ---
 
 ## 完成记录(done 时追加)
 
 ```text
-完成日期:
-完成 commit:
+完成日期: 2026-06-09
+完成 commit: (本次 feat(tools): T-06 register_vps MCP entry 提交后填入)
 任务状态: doing -> done
+
 改动摘要:
-测试命令:
-测试结果:
+  - 删 tools/rgvps.py (空占位, ADR-0007 §2 推翻为标准名)
+  - 新建 tools/register_vps.py (~150 行): TOOL+handler 元组范式, 抄 rgip.py 样板.
+    description 三段式 (功能+典型场景+6 种 status 转告+反例) 含全部 6 种 status:
+    queued / already_registered / auth_failed / ssh_timeout / ssh_refused / ssh_failed.
+    inputSchema 必填 ip/user/pwd/port (port 无 default), 选填 ed/provider.
+    annotations: idempotentHint=True (重复调返 already_registered).
+  - tools/__init__.py 仅加 register_vps 一条 (在 rgip 之前), 不动 rgip
+    (T-17 再统一改名 + 三段顺序整合).
+
+测试命令: PYTHONPATH=. VPS_SERVER_TESTING=1 uv run pytest test/ssh_worker/TC-06_register_vps_mcp_entry.py -v
+
+测试结果原样贴: 8 passed in 0.42s
+  TC-06-a tool_metadata
+  TC-06-b handler_passes_args (含 port string→int)
+  TC-06-c handler_returns_textcontent_json_status_6kinds (6 种 status 透传)
+  TC-06-d ed_parse (空/缺省→None / 错格式→ValueError)
+  TC-06-e port_required (缺 port→KeyError)
+  TC-06-f registered_in_all_tools
+  TC-06-g no_rgvps_in_name_description_has_all_status (防回退)
+  TC-06-h no_xray_query_in_description (防回退 SSHWorker v4 §5 不变量)
+
 未覆盖风险:
-后续任务: T-17 (MCP 剩余 4 件套改造)
+  1. inputSchema "required" 兜底由 MCP 框架运行时校验, 单测靠 handler 内部
+     args["port"] KeyError 间接验, 没直接模拟 MCP 协议层 schema 拒绝. 当前
+     范式 OK, 真实集成 MCP 时还要靠 MCP 框架.
+  2. 真实 MCP 客户端调用未端到端验证 (mcp_server.py 启动 + list_tools / call_tool
+     交互未跑), 等 dev_smoke 或后续 e2e 任务兜.
+
+后续任务: T-17 (MCP 剩余 4 件套改造: rgip 改名 register_ip + 2 个状态查询 +
+  __init__.py 三段顺序)
 ```
