@@ -142,36 +142,59 @@ sudo mysql -e "CREATE DATABASE vps_server CHARACTER SET utf8mb4 COLLATE utf8mb4_
 
 ---
 
-## 5. 先手动跑一次确认通
+## 5. 初始化 DB schema (⚠️ 首次部署必做)
 
-落 systemd unit 之前,先确认手动能跑:
+worker-loop **不会自动建表**, 第一次部署必须显式跑一次 `init-db`:
 
 ```bash
 # 还在 vps_server 账号下, /opt/vps_server 里
-PYTHONPATH=. uv run python main.py --help
+PYTHONPATH=. uv run python main.py init-db
 # 应看到:
-# usage: vps-server [-h] ACTION ...
-# positional arguments:
-#   ACTION
-#     worker-loop  启动 worker 调度循环 (常驻进程)
+# HH:MM:SS [INFO] main.worker_loop: init-db 启动: db_url=sqlite:///..., tables=[...]
+# HH:MM:SS [INFO] main.worker_loop: init-db 完成: 5 张表已就绪
+```
+
+幂等: 跑多次不会出错, 已存在的表跳过 (CREATE TABLE IF NOT EXISTS).
+
+### 5.1 后续 schema 演化怎么办
+
+| 场景 | 解法 |
+|---|---|
+| **加新表** (新 ORM 类) | 重跑 `python main.py init-db`, 新表会自动建出来 |
+| **加字段** (已有表加列) | `init-db` 不会改老表, 需手动 `ALTER TABLE ... ADD COLUMN ...` |
+| **改字段类型 / 删字段** | dev SQLite: 手动 `DROP TABLE` 后重跑 `init-db`; 生产 MySQL: `ALTER TABLE` |
+| **复杂迁移 / 数据搬迁** | 写专门迁移脚本, 或后续引入 alembic (本项目当前未接) |
+
+**经验法则**: 只要 ORM 加表, 一行 `init-db` 即可; 改老表字段, 手动 SQL.
+worker-loop 永远不会替你跑 init-db / 改 schema, 是人工部署动作.
+
+---
+
+## 6. 先手动跑 worker-loop 确认通
+
+落 systemd unit 之前, 先确认手动能跑:
+
+```bash
+PYTHONPATH=. uv run python main.py --help
+# 应看到 init-db / worker-loop 两个子命令
 
 PYTHONPATH=. uv run python main.py worker-loop
 # 应看到:
 # HH:MM:SS [INFO] main.worker_loop: main.worker-loop 启动: poll_interval=2s, workers=[XrayWorker, ProxyDeployWorker]
-# (然后挂在那里轮询)
+# (挂在那里轮询, 没 task 时静默)
 
 # Ctrl+C (= SIGINT) 应看到优雅退出:
 # HH:MM:SS [INFO] main.worker_loop: 收到信号 2, 准备优雅退出
 # HH:MM:SS [INFO] main.worker_loop: main.worker-loop 已退出
 ```
 
-跑通了再进 systemd。
+跑通了再进 systemd.
 
 ---
 
-## 6. 装 systemd unit
+## 7. 装 systemd unit
 
-### 6.1 改 unit 文件里的 4 处占位
+### 7.1 改 unit 文件里的 4 处占位
 
 打开 `deploy/vps-server-worker.service`,改 4 行:
 
@@ -188,7 +211,7 @@ EnvironmentFile=/opt/vps_server/.env           # ← .env 路径
 ExecStart=/opt/vps_server/.venv/bin/python main.py worker-loop
 ```
 
-### 6.2 装 + 启动
+### 7.2 装 + 启动
 
 ```bash
 # 切回 root (sudo) 装 unit
@@ -203,7 +226,7 @@ sudo systemctl start vps-server-worker                                  # 立即
 # sudo systemctl enable --now vps-server-worker
 ```
 
-### 6.3 验证
+### 7.3 验证
 
 ```bash
 sudo systemctl status vps-server-worker
@@ -215,7 +238,7 @@ sudo journalctl -u vps-server-worker -n 20
 
 ---
 
-## 7. 守护机制怎么生效的
+## 8. 守护机制怎么生效的
 
 | 场景 | systemd 行为 | 对应配置 |
 |---|---|---|
@@ -228,7 +251,7 @@ sudo journalctl -u vps-server-worker -n 20
 
 ---
 
-## 8. 日常运维命令
+## 9. 日常运维命令
 
 ```bash
 # 看状态
@@ -251,6 +274,8 @@ sudo systemctl stop vps-server-worker
 
 # 改代码后重启
 cd /opt/vps_server && sudo -u vps_server git pull && sudo -u vps_server uv sync
+# ⚠️ 如果本次 git pull 引入了新 ORM 表, 先跑一次 init-db 再 restart
+# sudo -u vps_server PYTHONPATH=. .venv/bin/python main.py init-db
 sudo systemctl restart vps-server-worker
 
 # 关掉开机自启 (不再拉起, 但不停当前进程)
@@ -259,7 +284,7 @@ sudo systemctl disable vps-server-worker
 
 ---
 
-## 9. MCP server 那一头怎么连
+## 10. MCP server 那一头怎么连
 
 `mcp_server.py` 是 stdio 接口的 MCP server,**不进 systemd**。
 由 MCP 客户端配置文件指向它即可。
@@ -290,7 +315,7 @@ sudo systemctl disable vps-server-worker
 
 ---
 
-## 10. 常见问题排查
+## 11. 常见问题排查
 
 ### Q1 `systemctl start` 后立刻 fail
 
@@ -333,7 +358,7 @@ main.worker-loop 已退出
 
 ---
 
-## 11. 不进 systemd 的轻量替代
+## 12. 不进 systemd 的轻量替代
 
 不想用 systemd (开发机 / Docker 里跑) 也有选择:
 
