@@ -219,25 +219,70 @@ PYTHONPATH=. pytest test/proxy_deploy_worker/TC-*.py -v
 
 > ⚠️ 全部打勾才允许改 `doing` → `done`
 
-- [ ] T-15 已 done(前置)
-- [ ] 任务文件改为 `doing`
-- [ ] `workers/proxy_deploy_worker.py` 实现完, 主流程 + 6 个私有方法
-- [ ] 失败 6 码全实现, 对照 spec §7 / 本任务"失败码全集"表
-- [ ] 不变量 6 条全实现(spec §9), TC-12 / TC-13 覆盖
-- [ ] TC-02 ~ TC-13 全过(TC-14 真服务器可选)
-- [ ] 完成记录段已填(测试结果原样贴)
-- [ ] **没有**改动 db/models.py / tools/* / mcp_server.py(对照"不动"清单)
+- [x] T-15 已 done(前置)
+- [x] 任务文件改为 `doing`
+- [x] `workers/proxy_deploy_worker.py` 实现完, 主流程 + 私有方法
+- [x] 失败 6 码全实现, 对照 spec §7 / 本任务"失败码全集"表
+- [x] 不变量 6 条全实现(spec §9), TC-12 / TC-13 覆盖
+- [x] TC-02 ~ TC-13 全过(TC-14 真服务器可选, 默认 skip)
+- [x] 完成记录段已填(测试结果原样贴)
+- [x] **没有**改动 db/models.py / tools/* / mcp_server.py(对照"不动"清单)
 
 ---
 
 ## 完成记录(done 时追加)
 
 ```text
-完成日期:
-完成 commit:
+完成日期: 2026-06-09
+完成 commit: (本次 feat(workers): T-16 ProxyDeployWorker 提交后填入)
 任务状态: doing -> done
+
 改动摘要:
-TC 通过数: N / 总数
+  - 新建 workers/proxy_deploy_worker.py: ProxyDeployWorker 类, process_task
+    主入口 + 私有方法(_claim_task / _load_credentials / _pick_vps_and_lock /
+    _pick_port / _deploy_one_binding / _safe_rollback / _mark_done /
+    _mark_failed / _handle_retriable).
+  - inbound 账密生成(需求 2026-06-09 拍板 b 方案):
+    inbound_user = f"proxy_{ip.id}", inbound_pwd = uuid4().hex (32 字符).
+  - 失败码全集 6 种全实现:
+    no_vps_capacity / no_port_available / apply_binding_failed /
+    firewall_open_failed / inner_ping_failed / ssh_disconnected.
+    ssh_disconnected 走 _handle_retriable (5 次重试 + 指数退避封顶 60min),
+    其余终态; 失败时 vps.stage 保持 'running' (除 no_vps_capacity 没抢机).
+  - 抢机两写同事务: vps.stage='running' + ip_task.vps_id=vps.id 同一 commit.
+  - 挑端口排除集: COMMON_RESERVED_PORTS + XRAY_DEFAULT_PORT +
+    proxy_record.vps_port(using) + ss-tln 实测占用; secrets.choice 随机.
+  - 收尾 4 表同事务: proxy_record INSERT + ip.status usable→using +
+    vps.used_port_count+1 + vps.stage→connectable + ip_task→done.
+  - 外 ping 不通走 done + status='pending_fw' (spec §8 边界, 不算失败).
+  - test/proxy_deploy_worker/spec.md v1.1: §6 占位 <生成 user/pwd> 替换为
+    具体规则; §三 修订历史加 v1.1 条目.
+  - 新建 test/proxy_deploy_worker/_helpers.py + __init__.py + 12 个 TC 文件
+    + TC-14 真机 e2e (默认 skip).
+
+TC 通过数:
+  ProxyDeployWorker (TC-01~TC-14): 61 passed, 1 skipped (TC-14 真机)
+  上游 worker 回归 (xray+ssh+ip_probe): 109 passed, 1 skipped
+  总计: 170 passed, 2 skipped, 0 failed
+
+测试结果原样贴(最后一行):
+  test/proxy_deploy_worker: 61 passed, 1 skipped, 16 warnings in 0.93s
+  回归: 109 passed, 1 skipped, 10 warnings in 1.58s
+
 未覆盖风险:
-后续任务: T-17 (MCP 剩余 4 件套, 含 get_ip_registration_status 暴露 proxy_record 给 agent)
+  1. TC-14 真机 e2e 默认 skip, 真实 SSH+xray+firewall 链路未在单元测试跑.
+     建议下次有真测试 VPS+真上游 IP 时手动跑(VPS_TEST_REAL_E2E=1)或走
+     dev_smoke 脚本.
+  2. apply_proxy_binding 在 upload/validate/reload 阶段抛错时, last_config
+     仍是 None 无法 rollback (服务器 config 可能已部分写). spec §7 注
+     "已 rollback 是尽力而为", 留给运维核查. 后续可拆 apply 分阶段返回.
+  3. _pick_port 用 secrets.choice 随机, 极小概率两个并发任务挑到同一端口,
+     UniqueConstraint("vps_id","vps_port") 兜底(INSERT 会抛, 任务标 failed).
+     当前规模够用.
+  4. SSH 失败重试 5 次封顶 + 指数退避(cap 60min), 跨阈值场景未单独测
+     (XrayWorker TC-12/TC-13 同模式已覆盖, 不重复).
+
+后续任务: T-17 (MCP 剩余 4 件套: register_vps + register_ip 改名 +
+  get_vps_registration_status + get_ip_registration_status, 其中
+  get_ip_registration_status 一次拿全 ip_record + ip_task + proxy_record).
 ```

@@ -144,14 +144,18 @@ vps_port = random.choice(list(available))  # 高位随机
 **成功路径**（内 ping 通）, 同事务一次写全:
 
 ```python
+# inbound 账密生成规则 (需求窗口拍板 2026-06-09, v1.1 写入 spec):
+#   inbound_user = f"proxy_{ip.id}"   (例 ip_id=42 → "proxy_42", 排障时一眼看出挂的哪条 IP)
+#   inbound_pwd  = uuid4().hex        (32 字符随机, 不可猜)
+
 with session_scope() as s:
     # proxy_record: INSERT 新行
     proxy = ProxyRecord.from_new_deployment(
         vps_id=vps.id,
         vps_port=vps_port,
         ip_id=ip.id,
-        inbound_user=<生成的 user>,
-        inbound_pwd=<生成的 pwd>,
+        inbound_user=f"proxy_{ip.id}",
+        inbound_pwd=uuid4().hex,
         upstream_host=ip.entry_host,
         egress_ip=ip.egress_ip,
         egress_country=ip.country_code,
@@ -259,3 +263,4 @@ with session_scope() as s:
 ## 三、修订历史
 
 - v1 2026-06-09 初版（对应 ADR-0006 落地）
+- v1.1 2026-06-09 §6 inbound 账密生成规则敲定（user=f"proxy_{ip.id}", pwd=uuid4().hex），跟 T-16 实现 + TC 同 commit 落
