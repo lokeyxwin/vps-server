@@ -1,7 +1,7 @@
 # T-13 IPProbeWorker 实现(rgip 入口同步段主工人)
 
 **ID**: T-13
-**状态**: waiting
+**状态**: done
 **前置依赖**:
 - T-10(probe_vps.PROBE_VPS_POOL 测试 VPS 清单)
 - T-11(IPStatus / IPRecord.status 字段 / IPTask 表)
@@ -468,17 +468,17 @@ VPS_SERVER_TESTING=1 pytest test/ip_probe_worker/ -v
 
 ### 实现者完工标准
 
-- [ ] 开工前文件名 waiting → doing
-- [ ] T-10 / T-11 / T-12 都已 done(本任务依赖)
-- [ ] `workers/ip_probe_worker.py` 实现完整(主入口 + 8 私有方法)
-- [ ] `test/ip_probe_worker/` 11 个 TC 都新增
-- [ ] 必跑测试命令全 PASS
-- [ ] 文案符合 spec §7 7 种 status 表
-- [ ] 不变量 9 条(spec §9)全部满足
-- [ ] 没动 SSHWorker / XrayWorker / 旧 services/
-- [ ] 没新增工具(全部从 spec §二 §A~§G 调)
-- [ ] 不入库声明值 / 带宽 / 时间戳
-- [ ] 完成记录段已填
+- [x] 开工前文件名 waiting → doing
+- [x] T-10 / T-11 / T-12 都已 done(本任务依赖)
+- [x] `workers/ip_probe_worker.py` 实现完整(主入口 + 8 私有方法)
+- [x] `test/ip_probe_worker/` 11 个 TC 都新增
+- [x] 必跑测试命令全 PASS(用 glob 显式收集 TC-*.py, 见偏差段)
+- [x] 文案符合 spec §7 7 种 status 表
+- [x] 不变量 9 条(spec §9)全部满足
+- [x] 没动 SSHWorker / XrayWorker / 旧 services/
+- [x] 没新增工具(全部从 spec §二 §A~§G 调; B(a) 拍板小扩展 probe_vps.py)
+- [x] 不入库声明值 / 带宽 / 时间戳
+- [x] 完成记录段已填
 
 ### 实现过程记录
 
@@ -511,12 +511,93 @@ VPS_SERVER_TESTING=1 pytest test/ip_probe_worker/ -v
 ## 完成记录(done 时追加)
 
 ```text
-完成日期:
-完成 commit:
+完成日期: 2026-06-09
+完成 commit: 见本 commit hash
 任务状态: doing -> done
+
 改动摘要:
+- 新建 workers/ip_probe_worker.py: IPProbeWorker 类 (主入口 process + 8 私有方法
+  spec §F 全对齐, _classify_proxy_error 主靠 exit_code, stderr 关键字软兜底)。
+  process 8 步流程在 try/finally 兜底 + 整段 except 兜底转 proxy_failed。
+  失败文案 5 种 (auth_failed/timeout/refused/failed/duplicate-actual)。
+- 新建 test/ip_probe_worker/__init__.py + _helpers.py + 11 个 TC 文件:
+  TC-01 ① 早期查重 (3 用例)
+  TC-02 ② 测试 VPS 顺序挑 (5 用例)
+  TC-03 ③+④ 挂上游 (3 用例)
+  TC-04 _classify_proxy_error 映射 (6 用例)
+  TC-05 ④ proxy_auth_failed 路径 (3 用例)
+  TC-06 ④ proxy_timeout 路径 + 重试 3 次 (3 用例)
+  TC-07 ④ proxy_refused 路径 (3 用例)
+  TC-08 ⑦ 入库成功 + 派任务 (6 用例)
+  TC-09 ⑥ 二次查重 (3 用例)
+  TC-10 try/finally 兜底 (3 用例)
+  TC-11 域名入口 (2 用例)
+  总 40 用例。
+- 扩展 probe_vps.example.py + probe_vps.py 加 PROBE_TEST_PORT = 19000 常量
+  (B(a) 拍板) + 注释说明端口选择理由 (跟 18440 默认入口 + 高位段隔离)。
+- test/probe_vps/TC-01_probe_vps_pool.py 补一条断言: PROBE_TEST_PORT 是 1024-65535
+  高位段且 != 18440。
+
 测试命令:
+- VPS_SERVER_TESTING=1 pytest test/ip_probe_worker/TC-*.py -v
+- 全套回归: VPS_SERVER_TESTING=1 pytest \
+      test/probe_vps/TC-*.py test/_data_structures/ \
+      test/xray/test_test_internal_socks_structure.py \
+      test/xray_worker/TC-*.py test/ssh_worker/TC-*.py \
+      test/ip_probe_worker/TC-*.py -v
+
 测试结果:
+- T-13 本体: 40 collected, 40 passed in 0.32s, 0 failed
+- 全套回归: 120 passed + 2 skipped (TC-14 真服务器 + VPSTask TC-11 抢锁原子性
+  占位, 跟本任务无关) + 10 个 utcnow DeprecationWarning (存量)
+
+冲突核对结果 (A-H 全部已对齐):
+A. probe_vps API: 用 get_probe_vps_pool() helper, 不再用任务单原 PROBE_VPS_POOL
+   直接 import (空 pool 时 helper 抛指引, 工人转 probe_vps_unreachable)。
+B. PROBE_TEST_PORT 拍 (a): 扩 probe_vps.py + probe_vps.example.py 加常量, TC-01
+   补一条断言。理由: 跟测试 VPS 资源 (PROBE_VPS_POOL / 18440 默认入口) 同住
+   一个文件最内聚。
+C. pytest TC 收集坑: 必跑命令用 glob `test/ip_probe_worker/TC-*.py`, 不是任务单
+   原目录形式 (memory project_pytest_tc_collection_pitfall 已沉淀)。
+D. stderr 多为空: _classify_proxy_error 主靠 exit_code (7/28/97 三档 + 兜底),
+   stderr 关键字 ("auth" / "socks5" 大小写不敏感) 仅作软升级兜底; TC-04 测了
+   两条软兜底路径但实测罕见。
+E. dev DB: T-11 已迁移完成, T-13 不动 dev DB, 所有 TC 用 in-memory SQLite。
+F. probe_vps.py 不在 git: TC 用 monkeypatch patch get_probe_vps_pool 注入测试
+   数据, 不依赖本地文件存在。
+G. IPRecord.from_form 签名: keyword-only 完全对齐, _persist_and_dispatch 按
+   T-11 实际签名调 (geo 传 lookup_egress 返回 dict)。
+H. IPTask 字段: vps_id nullable / TaskStatus.PENDING / 字段集跟 VPSTask 对称,
+   建任务时 IPTask(ip_id=新 id) 即可, vps_id 不传 = NULL (spec §9 不变量)。
+
+偏差 / 风险:
+- 必跑测试命令偏差: `test/ip_probe_worker/` 改 `test/ip_probe_worker/TC-*.py`
+  (项目级痛点, 已记 memory 笔记)。
+- _classify_proxy_error stderr 关键字降级为软兜底: T-12 实施时 cmd 保留 2>&1,
+  stderr 多为空; 任务单原写"双重确认"路径调整为"未知 exit_code + stderr 含
+  auth/socks5 关键字 → 兜底升 auth_failed"。
+- 真机端到端验证未跑: 需要用户提供真实上游代理凭据 + 测试 VPS 可达 + xray
+  能正确装挂拆。计划在 T-14 (tools/rgip.py MCP 入口) 实施时一起做真机验证;
+  或单独跑一次 dev_smoke_ip_probe_worker.py (本地脚本, 在 .gitignore)。
+- 多个 TC setUp 有相似 patch 列表, 重复 boilerplate, 但跟项目其他 worker TC
+  风格一致 (一文件一上下文)。如需提炼成 base class 可后续单独清理。
+
 未覆盖风险:
+- 真服务器端到端 (SSH 真连测试 VPS + xray 真装挂拆 + curl 真打上游) 未跑;
+  spec §10 边界情况 "测试 VPS 19000 端口残留无法 remove" / "测试 VPS SSH 通了
+  但 19000 操作 xray 失败" 等真机场景需要 T-14 / 真测试单独覆盖。
+- 并发场景 (两个 rgip 同时调本工人) 不在范围, MCP 边界外部串行已保证
+  (spec §1)。
+- 测试 VPS 凭据轮换 / pool 动态变化场景未覆盖 (T-10 范畴, 凭据直写常量)。
+
 后续任务:
+- T-14 tools/rgip.py MCP 入口实施时:
+  1. 真机跑一次 IPProbeWorker.process() 端到端验证
+  2. Tool.description 写明"多条 IP 请一条一条提交, 等上一条返回再提交下一条"
+  3. 状态查询工具配套
+- ProxyDeployWorker (后续) 抢 ip_task 后:
+  - 挑机查询用 vps_record.stage=connectable AND xray_version != '' AND
+    is_active=1 ORDER BY used_port_count ASC
+  - 配置成功同事务: ip_task.status=done + ip_record.status=using + 回填
+    ip_task.vps_id + 写 proxy_record + vps.stage 流转
 ```

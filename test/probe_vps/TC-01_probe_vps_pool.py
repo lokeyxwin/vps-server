@@ -8,6 +8,7 @@ import pytest
 import probe_vps
 from probe_vps import (
     NO_PROBE_VPS_MESSAGE,
+    PROBE_TEST_PORT,
     PROBE_VPS_POOL,
     get_probe_vps_pool,
 )
@@ -47,3 +48,10 @@ def test_get_probe_vps_pool_raises_with_guidance_when_empty(monkeypatch):
         probe_vps.get_probe_vps_pool()
     assert str(exc_info.value) == NO_PROBE_VPS_MESSAGE
     assert "probe_vps.py" in str(exc_info.value)
+
+
+def test_probe_test_port_is_valid_high_port_not_default_inbound():
+    """PROBE_TEST_PORT (T-13 加) 是 int, 1024-65535 高位段, != 18440 默认入口。"""
+    assert isinstance(PROBE_TEST_PORT, int)
+    assert 1024 <= PROBE_TEST_PORT <= 65535
+    assert PROBE_TEST_PORT != 18440

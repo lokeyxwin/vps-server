@@ -23,6 +23,12 @@ PROBE_VPS_POOL: tuple[dict, ...] = (
 )
 
 
+# IPProbeWorker 在测试 VPS 上临时挂上游凭据用的端口
+# 跟测试 VPS 自身默认入口 18440 (xray socks5→freedom 直进直出) 隔离
+# 跟生产 VPS 高位段 (>1024 排除清单外) 也隔离
+PROBE_TEST_PORT = 19000
+
+
 NO_PROBE_VPS_MESSAGE = (
     "没有可用测试 VPS。请往 probe_vps.py 的 PROBE_VPS_POOL 加一条凭据 "
     "(字段: ip / port / username / password, 跟 VPSSession.__init__ 形参对齐)。"
