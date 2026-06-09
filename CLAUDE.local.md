@@ -586,6 +586,90 @@ PROBE_VPS = {
 - 工具：XrayManager 新增方法 `extract_existing_outbounds()`（旧 `xray/config.py::extract_port_bindings` 提供原始能力，搬到 manager.py 类方法里实现）
 - 巡检（ExpiryWorker，封存）见到 `expire_date=null` 直接跳过，不当过期处理
 
+## 13. 心智模型 — 二进程 + 4 层（见 ADR-0008）
+
+### 二进程
+
+```
+mcp_server.py            前台收单         接 stdio MCP 协议，分发 MCP 工具 handler
+main.py worker-loop      后端常驻调度      扫 task 表 + 推 worker（异步段）
+```
+
+部署: 两个进程分别拉起, MCP server 重启不影响装机 worker, 反之亦然。
+
+### 4 层职责
+
+| 层 | 位置 | 干啥 | 谁调它 |
+|---|---|---|---|
+| 协议适配 | `tools/*.py` | MCP arguments → 业务函数调用 → JSON 包 TextContent | `mcp_server.py` |
+| 异步业务 | `workers/*.py` | 主动扫 task 表 + 编排原子工具 + 状态机 | `main.py worker-loop`（异步段）/ `tools/*.py` handler（同步段） |
+| 业务函数 | `db/queries.py` | MCP 工具调的所有业务函数（读写都在，白名单 patch） | `tools/*.py` handler / 未来跨 worker 共用 |
+| ORM | `db/models.py` | 表结构 + ORM 模型 + 业务方法（from_form/from_new_deployment 等） | 所有上层 |
+
+> **worker 调度边界**：`workers/` 含 4 个 worker，按调度方式分两段:
+> - **异步段**（进 `main.py worker-loop`）: `XrayWorker` / `ProxyDeployWorker` — 扫 task 表轮询消费
+> - **同步段**（被 MCP 入口 handler 直接调 `process()`）: `SSHWorker`（`register_vps`）/ `IPProbeWorker`（`register_ip`）— 同步段做敲门 / 凭据校验，通过后建 task 立刻返回
+
+### `db/queries.py` 边界（重点）
+
+- **MCP 工具调的所有业务函数住这里**，读 + 写都在
+- 读：query_vps_status / query_ip_status / list_available_proxies（T-18 搬过来的）
+- 写：未来 update_<对象>_<字段>（按 §14.3 ABCD 4 条规则建）
+- 文件层面**不强制只读** — 权限隔离靠 §14.1 MCP admin/user 分层
+- 任何 SQL（SELECT / INSERT / UPDATE / DELETE）住 `db/queries.py`，handler 不写 SQL
+
+### `services/` 边界（终态）
+
+- T-18 起 **`services/` 退出活跃路径**：没有任何 worker / tools / db 在 import `services/`
+- 旧 `services/vps_register.py` / `vps_init.py` / `ip_register.py` 等保留作对照，不删不增
+- 替换上面 §11 旧 services/ 的处理 规则的"新代码不 import services/"软规则 → 现在是硬事实（grep 验证）
+
+## 14. MCP 工具上线评估清单 + 写入工具白名单 patch 4 条硬规则（见 ADR-0008 §3）
+
+### 14.1 admin / user 分层评估（每个新工具必走）
+
+新增任何 MCP 工具上线前，**实现者必须跟需求窗口对齐**:
+
+1. 影响面多广？（查 / 改哪些表 / 哪些字段 / 涉及哪些 worker / 业务影响范围）
+2. 暴露给 admin 还是 user？
+3. 如果是写入工具，是否满足 §14.3 4 条规则？
+
+对齐前不允许上线。MCP 真正拆 admin/user 两套 server 留下波（ADR-0007 §8 + ADR-0008 §3.1）。
+
+### 14.2 任务表不暴露写入工具（硬约束）
+
+- `vps_task` / `ip_task` = **历史日志事实**，永不暴露任何写入 MCP 工具
+- 任务状态机只由 `workers/` 内部推进（pending → in_progress → done/failed）
+- 任何"重跑任务"/"重置 retry_count"等需求 → 通过 `register_vps` / `register_ip` 重发请求，**不通过改 task 表**
+
+### 14.3 业务表写入工具的 4 条硬规则（ABCD）
+
+仅 `ip_record` / `vps_record` 允许写入工具暴露给 MCP。每个写入工具必须满足:
+
+**规则 A 主键精准定位**
+- 入参必须含目标记录主键（`ip_id` / `vps_id`）
+- 后端 `UPDATE WHERE id=?` 改单行
+- 禁止模糊匹配（egress_ip / IP 字符串 / 名字等）
+
+**规则 B 白名单字段 patch**
+- 工具签名只列允许改的字段，后端 UPDATE 只写这些列
+- ✅ `update_ip_expire_date(ip_id, expire_date)`
+- ❌ `update_ip(ip_id, payload: dict)`  ← payload 整对象覆盖**禁止**
+
+**规则 C 整对象不允许覆盖**
+- `session.merge(record)` / 整行替换 / `payload dict → ORM 整字段 update` **全部禁止**
+- 跟 §"DB 增量写入 / 字段所有权"（v4 追加）同源约束
+
+**规则 D 工具命名反映约束**
+- 模板：`update_<对象>_<字段>`（例 `update_ip_expire_date` / `update_vps_is_active`）
+- 反例：`update_ip` / `patch_vps` / `set_ip_field`（通用 update 必然走向整对象覆盖）
+
+### 14.4 现有工具回顾（约束未来代码，不动现有）
+
+- `register_vps` / `register_ip`：INSERT 新行，**不在 update 范畴**，不受 §14.3 约束
+- 5 个查询工具：全 read-only，不受 §14.3 约束
+- 本规则起点没有任何 `update_*` 工具存在，§14.3 4 条规则**约束未来新增**
+
 ---
 
 # 状态：本节已落定（v3）
@@ -606,4 +690,15 @@ PROBE_VPS = {
 - v4 2026-06-08 追加 DB 增量写入 / 字段所有权规则：
   - 命中已有记录只能按字段白名单 patch，禁止整行覆盖。
   - 明确 SSHWorker 与 XrayWorker 对 `vps_record` 的字段写入边界。
+- v5 2026-06-09 追加 ADR-0008 落地（见 docs/adr/0008-*.md）：
+  - 新增 §13 心智模型（二进程 + 4 层 + `db/queries.py` 边界）
+    - 二进程：mcp_server.py 前台收单 / main.py worker-loop 后端常驻
+    - 4 层：tools/ → workers/ → db/queries.py → db/models.py
+    - db/queries.py 是 MCP 工具调的所有业务函数集合，读写都在
+  - 新增 §14 MCP 工具上线评估清单 + 写入工具白名单 patch 4 条硬规则
+    - §14.1 admin/user 分层评估
+    - §14.2 任务表（vps_task / ip_task）不暴露写入工具
+    - §14.3 业务表写入工具 ABCD 4 条规则（主键精准 / 白名单 / 不覆盖 / 命名反映约束）
+    - §14.4 现有 5 工具均不在 update 范畴，4 条规则约束未来新增
+  - §11 旧 services/ 处理 规则：T-18 起 services/ 退出活跃路径（grep 验证硬事实）
 - 后续修订请按 CLAUDE.md §5.1 落文件前列 diff 给用户审
