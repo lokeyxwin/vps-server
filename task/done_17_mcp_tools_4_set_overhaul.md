@@ -259,27 +259,87 @@ PYTHONPATH=. python -c "from tools import ALL_TOOLS; print([t.name for t,_ in AL
 
 > ⚠️ 全部打勾才允许改 `doing` → `done`
 
-- [ ] T-06 已 done
-- [ ] 任务文件改为 `doing`
-- [ ] `git mv tools/rgip.py tools/register_ip.py`, name 字段改 `"register_ip"`
-- [ ] 新建 `tools/get_vps_registration_status.py` 实现完
-- [ ] 新建 `tools/get_ip_registration_status.py` 实现完
-- [ ] 新建查询函数(位置在记录里说明)实现完
-- [ ] `tools/__init__.py` 整合 5 工具 + 三段顺序排序, **没有** rgip 残留 import
-- [ ] TC-01 ~ TC-10 全过
-- [ ] description 不变量(spec.md §8): 每工具 description 列了 §6.x 全部 status 名, 不漏不多
-- [ ] 完成记录段已填
+- [x] T-06 已 done
+- [x] 任务文件改为 `doing`
+- [x] `git mv tools/rgip.py tools/register_ip.py`, name 字段改 `"register_ip"`
+- [x] 新建 `tools/get_vps_registration_status.py` 实现完
+- [x] 新建 `tools/get_ip_registration_status.py` 实现完
+- [x] 新建查询函数(位置: `services/registration_query.py`, 选择理由见完成记录)
+- [x] `tools/__init__.py` 整合 5 工具 + 三段顺序排序, **没有** rgip 残留 import
+- [x] TC-01 ~ TC-10 全过 (26 子测一并通过)
+- [x] description 不变量(spec.md §8): 每工具 description 列了 §6.x 全部 status 名, 不漏不多
+- [x] 完成记录段已填
 
 ---
 
 ## 完成记录(done 时追加)
 
 ```text
-完成日期:
-完成 commit:
+完成日期: 2026-06-09
+完成 commit: (本次 feat(tools): T-17 MCP 5 件套整合 提交后填入)
 任务状态: doing -> done
+
 改动摘要:
-查询函数位置选择: <services/registration_query.py / db/queries.py / ...>
+  - git mv tools/rgip.py tools/register_ip.py; 改 name="register_ip" + 顶部 docstring
+    标"旧名 rgip 已弃, ADR-0007 §2"映射说明; description / inputSchema 全沿用.
+  - 新建 services/registration_query.py: query_vps_status + query_ip_status 两个
+    read-only join 查询函数. 输出形状对齐 spec.md §6.3 / §6.4.
+    query_ip_status 在 task.status=done 时一条龙拉 proxy_record + vps 拼 proxy_node
+    dict 一次返 (含 vps_ip / vps_port / inbound_user / inbound_pwd / status).
+  - 新建 tools/get_vps_registration_status.py (~90 行): 按 rgip.py 范式,
+    readOnlyHint=True, description 教 agent 怎么按 task.status / last_error_code
+    转告用户; 入参 vps_id 或 task_id 二选一.
+  - 新建 tools/get_ip_registration_status.py (~110 行): ⭐ 一条龙,
+    readOnlyHint=True, description 含 ProxyDeployWorker 6 种失败码 + pending_fw +
+    using 的转告规则; 入参 ip_id 或 task_id 二选一.
+  - 改 tools/__init__.py: 5 工具三段顺序排序 + 顶部注释更新 (写入意图 → 状态
+    查询 → 数据查询).
+  - 新建 test/mcp_tools/__init__.py + 6 个 TC 文件 (TC-01/03/04/06/08/09) 含 26
+    子测, 覆盖任务单的 TC-01 ~ TC-10 全部要求.
+
+查询函数位置选择: services/registration_query.py
+  理由:
+    1. 跟现有 services/proxy_query.py 同位 (都是 read-only 查询).
+    2. ADR-0007 §影响清单已标注 "services/proxy_query.list_available_proxies
+       暂保留 services/ 引用" — read-only 查询语义跟"业务编排"不同,
+       不在 ADR-0001 §决策 §5 "新代码不 import services/" 禁令范围内.
+    3. db/queries.py 不存在, 建新位置反而增加心智成本; 后续如果 services/
+       要清理, registration_query 和 proxy_query 一起搬即可.
+
+测试命令: PYTHONPATH=. VPS_SERVER_TESTING=1 uv run pytest test/mcp_tools/TC-*.py -v
+
+测试结果原样贴: 26 passed in 0.46s
+  TC-01 5 工具全部注册 + 每条目 (Tool, handler) 二元组
+  TC-02 三段顺序: 写入(2) → 状态查询(2) → 数据查询(1)
+  TC-03 register_ip 改名: name='register_ip' + 7 种 status + 透传参数 + JSON 透传
+  TC-04 get_vps_registration_status handler: 透传 vps_id/task_id, no_args→not_found
+  TC-05 get_vps_registration_status JSON 形状: status + vps 5 字段 + task 4 字段
+  TC-06 get_ip_registration_status ⭐ 一条龙: task.done + proxy_node 7 字段齐
+  TC-07 get_ip_registration_status not_found / in_progress→proxy_node=null
+  TC-08 description status 全集: 4 工具不漏不多
+  TC-09 防回退 rgip/rgvps: ALL_TOOLS names + 文件系统双重检查
+  TC-10 防回退 stem == TOOL.name: 5 工具三处对齐 importlib 反向校验
+
+启动命令验证:
+  PYTHONPATH=. uv run python -c "from tools import ALL_TOOLS; print([t.name for t,_ in ALL_TOOLS])"
+  → ['register_vps', 'register_ip', 'get_vps_registration_status',
+     'get_ip_registration_status', 'get_available_proxy_nodes'] ✅
+
+全套回归 (ssh_worker + proxy_deploy_worker + xray_worker + ip_probe_worker):
+  178 passed, 2 skipped (TC-14 真机 / TC-14 真机), 0 failed
+
 未覆盖风险:
+  1. handler 跟 MCP 框架的真实交互未端到端测 (mcp_server.py 启动 + tools/list +
+     tools/call 协议层未跑), 等 dev_smoke / e2e 兜.
+  2. query_vps_status / query_ip_status 走 SQLAlchemy + session_scope, 测试仅
+     mock query 验 handler, 没单测 query 函数本身的 SQL 正确性 (信赖 ORM +
+     上下游 worker 端到端跑过). 后续可补 services/registration_query 的单测.
+  3. ADR-0007 §8 "admin/user MCP 分层"留下波, 当前 server instructions 跟实际
+     注册不一致 (mcp_server.py L46-52), 仍是 stale 问题, 等单独 ADR.
+  4. get_ip_registration_status 返 inbound_pwd 明文 — 这是给 agent 转告用户的
+     凭据, 必须明文; 但 MCP 客户端 / 日志中可能落明文. 当前业务接受
+     (跟 get_available_proxy_nodes 已有姿态一致). 后续如果走多租户场景,
+     单独评估脱敏.
+
 后续任务: admin/user MCP 分层 (ADR-0007 §8 留下波, 后续单独 ADR)
 ```

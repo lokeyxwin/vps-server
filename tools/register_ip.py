@@ -1,11 +1,14 @@
-"""MCP 工具:rgip —— 登记一条上游 IP 代理凭据。
+"""MCP 工具:register_ip —— 登记一条上游 IP 代理凭据。
 
 这文件装啥:
-  rgip 这个 MCP 工具的协议适配层 —— 把 MCP 调用包装成
+  register_ip 这个 MCP 工具的协议适配层 —— 把 MCP 调用包装成
   workers.ip_probe_worker.IPProbeWorker.process() 调用。
 
   本文件只做"协议转换",不写任何业务逻辑。
   业务逻辑全在 IPProbeWorker 里(同步段:校验账密 + 入 ip_record + 派 ip_task)。
+
+  (旧名 rgip 已弃, T-17 改为标准名 register_ip;
+   用户口头说 rgip 时 Claude 自动映射, 代码侧不留旧名 —— ADR-0007 §2)
 
 谁调我:
   - admin MCP 客户端(agent 主动调)
@@ -29,7 +32,7 @@ from workers.ip_probe_worker import IPProbeWorker
 
 
 TOOL = Tool(
-    name="rgip",
+    name="register_ip",
     title="登记一条上游 IP 代理凭据",
     description=(
         "登记一条新的上游代理 IP 凭据。系统会用测试 VPS 临时挂这条凭据当 xray "
