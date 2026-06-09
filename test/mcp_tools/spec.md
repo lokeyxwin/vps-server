@@ -139,10 +139,13 @@ DB 里新增 last_error_code → 本表新增一行 → 对应工具 description
 | status | 后端含义 | description 教 agent 转告 |
 |--------|---------|------------------------|
 | `queued` | SSH 通过 + 已入 vps_record + 派 vps_task | "VPS 已登记, 后台正在装 xray, 预计 5-15 分钟" |
-| `duplicate` | 该 IP 已在库 | "这台 VPS (IP=X) 之前登记过了" |
-| `ssh_auth_failed` | SSH 账密错 | "账号密码不对, 请核对面板凭据" |
+| `already_registered` | 该 VPS IP 已在库 | "这台 VPS (IP=X) 之前登记过了, 后端返回了它的现状(含活跃 task / 上次失败原因)" |
+| `auth_failed` | SSH 账密错 | "账号密码不对, 请核对面板凭据" |
 | `ssh_timeout` | SSH 连不上 | "服务器连不上, 请确认端口是不是面板给的远程登录端口(不是默认 22)" |
 | `ssh_refused` | SSH 拒接 | "连接被拒, 同上确认端口" |
+| `ssh_failed` | SSH 未知失败 | "连接失败(其他原因), 把 message 字段原样转告用户排查" |
+
+> 注: 本表对齐 `workers/ssh_worker.py::SSHWorker.process()` 实际返回 6 种 status, 由 grep 代码现状校准(spec v1 初稿 5 种是 ADR-0007 编写时凭印象写的, 落地前已修正)。
 
 #### 6.2 `register_ip`
 
@@ -295,3 +298,4 @@ MCP 工具层是**对外协议适配层**, 本身就是"工具"的暴露, 不再
 ## 三、修订历史
 
 - v1 2026-06-09 初版(对应 ADR-0007 落地)
+- v1.1 2026-06-09 §6.1 status 列表对齐 SSHWorker 代码现状(grep 校准, 修正 ADR-0007 落地时凭印象写错的 3 处: `duplicate`→`already_registered` / `ssh_auth_failed`→`auth_failed` / 补 `ssh_failed`)
