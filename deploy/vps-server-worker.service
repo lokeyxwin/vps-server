@@ -1,0 +1,69 @@
+# systemd unit for vps-server worker-loop (后端常驻调度)
+#
+# 心智模型 (ADR-0008 §决策 §1):
+#   mcp_server.py        前台收单     由 MCP 客户端拉起, 不进 systemd
+#   main.py worker-loop  后端常驻     ← 本 unit 管这个
+#
+# 部署教程: deploy/README.md
+#
+# 部署前必改 (4 处 = User / Group / WorkingDirectory / EnvironmentFile):
+#   1. User / Group     业务账号 (建议非 root)
+#   2. WorkingDirectory 项目落地路径 (含 .venv / db / main.py 的根)
+#   3. EnvironmentFile  .env 文件路径
+#   4. ReadWritePaths   sqlite 文件目录 + 日志目录 (切 MySQL 可去掉 sqlite 那条)
+#
+# 安装:
+#   sudo cp deploy/vps-server-worker.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now vps-server-worker
+#
+# 日志:
+#   sudo journalctl -u vps-server-worker -f
+
+[Unit]
+Description=VPS Server — worker loop (XrayWorker + ProxyDeployWorker)
+Documentation=file:///opt/vps_server/docs/adr/0008-main-as-worker-runner-and-db-queries-home.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# ===== 业务账号 + 工作目录 (按实际改) =====
+User=vps_server
+Group=vps_server
+WorkingDirectory=/opt/vps_server
+EnvironmentFile=/opt/vps_server/.env
+
+# ===== 启动命令 =====
+# 直接走 venv 里的 python, 不依赖 uv 在 PATH (systemd 环境 PATH 很干净)
+ExecStart=/opt/vps_server/.venv/bin/python main.py worker-loop
+Environment=PYTHONPATH=/opt/vps_server
+Environment=PYTHONUNBUFFERED=1
+
+# ===== 优雅退出 (跟 main.py 里的 SIGTERM handler 对齐) =====
+KillSignal=SIGTERM
+TimeoutStopSec=120        # 给 120s 跑完手头活, 一轮 worker 通常 < 30s
+SendSIGKILL=yes           # 超 120s 仍不退 → 强杀兜底
+
+# ===== 崩溃自愈 =====
+Restart=on-failure        # 主动 exit 0 (优雅退出) 不重启; 崩了才拉
+RestartSec=5s             # 崩了等 5s 再拉, 防紧密死循环
+StartLimitIntervalSec=300
+StartLimitBurst=5         # 5 分钟内崩 5 次 → 放弃 (防雪崩, 等人介入)
+
+# ===== 日志 → journald (用 journalctl 看) =====
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vps-server-worker
+
+# ===== 安全收紧 =====
+NoNewPrivileges=yes       # 禁止子进程提权
+ProtectSystem=strict      # /usr /boot /etc 只读
+ProtectHome=yes           # /home /root 不可见
+PrivateTmp=yes            # 独立 /tmp
+# sqlite 文件 + 日志目录的写权限 (切 MySQL 可去掉第一条)
+ReadWritePaths=/opt/vps_server/db
+
+[Install]
+WantedBy=multi-user.target
