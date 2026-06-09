@@ -125,8 +125,10 @@ class TestPickProbeVPS(unittest.TestCase):
         with patch("workers.ip_probe_worker.get_probe_vps_pool", side_effect=_empty_pool):
             with self.assertRaises(_ProbeVPSAllDownError) as cm:
                 self.worker._pick_probe_vps()
-        # 指引文案应该透传(里面包含 "probe_vps.py")
-        self.assertIn("probe_vps.py", str(cm.exception))
+        # 指引文案应该透传(凭据 env 化后, 指向 ~/.zshrc.local + PROBE_VPS_1_IP)
+        msg = str(cm.exception)
+        self.assertIn("zshrc.local", msg)
+        self.assertIn("PROBE_VPS_1_IP", msg)
 
     # ---------- TC-02-e ----------
     def test_tc02e_process_returns_probe_vps_unreachable_status(self):
