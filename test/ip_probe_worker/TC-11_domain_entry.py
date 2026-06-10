@@ -57,6 +57,8 @@ class TestDomainEntry(unittest.TestCase):
             ),
             patch("workers.ip_probe_worker.VPSSession", FakeSess),
             patch("workers.ip_probe_worker.XrayManager", return_value=self.fake_xm),
+            # ADR-0009: 跳过测试机自举 (单独测见 test/probe_vps/TC-*).
+            patch("workers.ip_probe_worker.bootstrap.ensure_ready", return_value=None),
             patch(
                 "workers.ip_probe_worker.test_internal_socks",
                 return_value=make_internal_socks_result(

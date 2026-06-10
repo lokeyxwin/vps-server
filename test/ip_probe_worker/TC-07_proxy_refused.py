@@ -63,6 +63,8 @@ class TestProxyRefused(unittest.TestCase):
             patch("workers.ip_probe_worker.VPSSession", FakeSess),
             patch("workers.ip_probe_worker.XrayManager", return_value=self.fake_xm),
             patch("workers.ip_probe_worker.test_internal_socks", self.mock_probe),
+            # ADR-0009: 跳过测试机自举 (单独测见 test/probe_vps/TC-*).
+            patch("workers.ip_probe_worker.bootstrap.ensure_ready", return_value=None),
         ]
         for p in self._patches:
             p.start()

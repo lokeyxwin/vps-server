@@ -38,9 +38,6 @@ issue/
 # 临时 smoke 验证脚本(可能 hardcode 凭据, 跑完即删)
 dev_smoke_*.py
 
-# 测试 VPS 凭据(密码直写常量, 代码归本地所有; 占位见 probe_vps.example.py)
-probe_vps.py
-
 # 备份/封存文件（本地参考，不进库）
 test.bak/
 *.bak

@@ -64,6 +64,12 @@ class TestProxyAuthFailed(unittest.TestCase):
                     exit_code=97, stderr="",
                 ),
             ),
+            # ADR-0009: 跳过测试机自举 (ensure_ready 在 process 入口已加).
+            # TC 关注 process 主流程, 不在这里测自举 (单独 TC-12 / TC-02~05 测).
+            patch(
+                "workers.ip_probe_worker.bootstrap.ensure_ready",
+                return_value=None,
+            ),
         ]
         for p in self._patches:
             p.start()

@@ -22,12 +22,14 @@
   _apply_test_outbound / _classify_proxy_error /
   _probe_and_resolve / _persist_and_dispatch / _cleanup_probe
 
-我返回的 status 集 (7 种, spec §2):
+我返回的 status 集 (8 种, spec §2 + ADR-0009):
   - queued (成功)
-  - duplicate / probe_vps_unreachable
+  - duplicate
+  - probe_vps_unreachable (SSH 连不上测试机)
+  - probe_vps_not_ready (测试机 SSH 通但 xray 装/起/配 挂; ADR-0009 §决策 §5)
   - proxy_auth_failed / proxy_timeout / proxy_refused / proxy_failed
 
-行为规约金标准: test/ip_probe_worker/spec.md v2
+行为规约金标准: test/ip_probe_worker/spec.md v2 + docs/adr/0009-*.md
 """
 
 from __future__ import annotations
@@ -41,6 +43,9 @@ from log import get_logger
 from probe_vps import (
     NO_PROBE_VPS_MESSAGE,
     PROBE_TEST_PORT,
+    ProbeVPSSetupFailed,
+    ProbeVPSUnreachable,
+    bootstrap,
     get_probe_vps_pool,
 )
 from ssh.session import VPSSession
@@ -138,10 +143,11 @@ class IPProbeWorker:
           declared_egress_ip — 用户声明的出口 IP, 用于 ① 早期查重(可空)
           provider_domain / expire_date / user_label — 元信息, 入库用
 
-        返回 dict (7 种 status, spec §2):
+        返回 dict (8 种 status, spec §2 + ADR-0009):
           {"status": "queued", "ip_id", "task_id", "message"}
           {"status": "duplicate", "egress_ip", "message"}
           {"status": "probe_vps_unreachable", "message"}
+          {"status": "probe_vps_not_ready", "message"}   # ADR-0009 §5
           {"status": "proxy_auth_failed" / "proxy_timeout" / "proxy_refused" /
                      "proxy_failed", "message"}
         """
@@ -173,6 +179,26 @@ class IPProbeWorker:
             logger.warning("process: 测试 VPS 全连不上 (%s)", exc)
             return {
                 "status": "probe_vps_unreachable",
+                "message": str(exc),
+            }
+
+        # ②.5 自举测试机 (ADR-0009): 幂等装好 xray + 起 + 留 19000 inbound.
+        # SSH 失败 → probe_vps_unreachable (跟 _pick_probe_vps 同档);
+        # 装/起/配 失败 → probe_vps_not_ready (新 status, 区分上游 IP 问题).
+        try:
+            bootstrap.ensure_ready(probe_entry)
+        except ProbeVPSUnreachable as exc:
+            logger.warning("process: 测试 VPS ensure_ready SSH 失败 (%s)", exc)
+            return {
+                "status": "probe_vps_unreachable",
+                "message": str(exc),
+            }
+        except ProbeVPSSetupFailed as exc:
+            logger.warning(
+                "process: 测试 VPS ensure_ready 装/起/配 失败 (%s)", exc,
+            )
+            return {
+                "status": "probe_vps_not_ready",
                 "message": str(exc),
             }
 

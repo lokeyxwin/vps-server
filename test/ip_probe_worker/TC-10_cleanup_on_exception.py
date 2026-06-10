@@ -58,6 +58,8 @@ class TestCleanupOnException(unittest.TestCase):
             ),
             patch("workers.ip_probe_worker.VPSSession", FakeSess),
             patch("workers.ip_probe_worker.XrayManager", return_value=self.fake_xm),
+            # ADR-0009: 跳过测试机自举 (单独测见 test/probe_vps/TC-*).
+            patch("workers.ip_probe_worker.bootstrap.ensure_ready", return_value=None),
             patch(
                 "workers.ip_probe_worker.test_internal_socks",
                 side_effect=RuntimeError("test: paramiko 通道断了"),

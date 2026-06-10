@@ -5,8 +5,9 @@
   main.py worker-loop  后端常驻     扫 task 表 + 推异步段 worker
 
 用法:
-  uv run python main.py init-db          # 首次部署: 建好所有表 (幂等)
-  uv run python main.py worker-loop      # 启动后端 worker 调度循环
+  uv run python main.py init-db                       # 首次部署: 建好所有表 (幂等)
+  uv run python main.py init-probe-vps [--slot N]     # 装好测试 VPS (xray 装+起+inbound 幂等)
+  uv run python main.py worker-loop                   # 启动后端 worker 调度循环
 
 worker-loop 只调度异步段 worker (XrayWorker / ProxyDeployWorker).
 SSHWorker / IPProbeWorker 是 MCP 入口工具的同步段, 由 register_vps /
@@ -16,6 +17,11 @@ init-db 说明:
   - 跑 Base.metadata.create_all(engine), CREATE TABLE IF NOT EXISTS 幂等
   - SQLite / MySQL 都生效, 只建表不演化 (后续加字段走迁移)
   - dev SQLite 改 schema: 手动 DROP TABLE 再跑 init-db
+
+init-probe-vps 说明 (ADR-0009):
+  - 跑 probe_vps.bootstrap.ensure_ready, 幂等装好测试 VPS xray 基础设施
+  - 不入任何 DB 表 (测试机不是业务资产)
+  - 何时跑: 首次部署 / 换测试机 / agent 收到 probe_vps_not_ready 时
 """
 
 from __future__ import annotations
@@ -103,6 +109,45 @@ def _init_db() -> int:
     return 0
 
 
+def _init_probe_vps(slot: int = 0) -> int:
+    """跑 probe_vps.bootstrap.ensure_ready, 幂等装好测试 VPS (ADR-0009).
+
+    slot 选 PROBE_VPS_POOL 第几条 (0-based); pool 空 / 越界 / setup 失败都退 1.
+    """
+    from probe_vps import (
+        ProbeVPSError,
+        bootstrap,
+        get_probe_vps_pool,
+    )
+
+    logger.info("init-probe-vps 启动: slot=%d", slot)
+    try:
+        pool = get_probe_vps_pool()
+    except RuntimeError as exc:
+        logger.error("init-probe-vps: pool 空 → %s", exc)
+        return 1
+    if slot < 0 or slot >= len(pool):
+        logger.error(
+            "init-probe-vps: slot=%d 越界 (pool 长度=%d)", slot, len(pool),
+        )
+        return 1
+
+    entry = pool[slot]
+    try:
+        handle = bootstrap.ensure_ready(entry)
+    except ProbeVPSError as exc:
+        logger.error(
+            "init-probe-vps 失败: %s: %s", type(exc).__name__, exc,
+        )
+        return 1
+
+    logger.info(
+        "init-probe-vps 完成: host=%s inbound_port=%d",
+        handle.host, handle.inbound_port,
+    )
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="vps-server",
@@ -112,6 +157,14 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "init-db",
         help="建好所有表 (幂等, 首次部署或加新表时跑一次)",
+    )
+    init_probe_parser = subparsers.add_parser(
+        "init-probe-vps",
+        help="装好测试 VPS xray (幂等, ADR-0009)",
+    )
+    init_probe_parser.add_argument(
+        "--slot", type=int, default=0,
+        help="选 PROBE_VPS_POOL 第几条 (0-based, default 0)",
     )
     subparsers.add_parser(
         "worker-loop",
@@ -124,6 +177,8 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     if args.action == "init-db":
         return _init_db()
+    if args.action == "init-probe-vps":
+        return _init_probe_vps(slot=args.slot)
     if args.action == "worker-loop":
         _install_signal_handlers()
         return _run_worker_loop()
