@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  macOS launchd plist — vps-server worker-loop 守护配置
+
+  装到位置 (二选一):
+    用户级 (推荐, 当前账号登录就拉起):  ~/Library/LaunchAgents/com.vps-server.worker.plist
+    系统级 (开机就拉起, 需要 sudo):     /Library/LaunchDaemons/com.vps-server.worker.plist
+
+  安装命令:
+    cp deploy/com.vps-server.worker.plist ~/Library/LaunchAgents/
+    launchctl load -w ~/Library/LaunchAgents/com.vps-server.worker.plist
+
+  状态查询: launchctl list | grep vps-server
+  停 + 卸:  launchctl unload -w ~/Library/LaunchAgents/com.vps-server.worker.plist
+
+  ⚠️ 部署前必改 (4 处占位):
+    1. <key>WorkingDirectory</key> 下面那一行的路径
+    2. ProgramArguments 第 1 项 (python 路径)
+    3. EnvironmentVariables 的 PYTHONPATH
+    4. StandardOutPath / StandardErrorPath 的日志路径
+
+  ⚠️ macOS 盖电脑会挂起进程, dev 用足够, 生产别上 macOS.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.vps-server.worker</string>
+
+    <!-- ===== 启动命令 (按实际路径改) ===== -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/YOU/path/to/vps_server/.venv/bin/python</string>
+        <string>main.py</string>
+        <string>worker-loop</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/YOU/path/to/vps_server</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONPATH</key>
+        <string>/Users/YOU/path/to/vps_server</string>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+    </dict>
+
+    <!-- ===== 守护机制 ===== -->
+    <key>RunAtLoad</key>
+    <true/>              <!-- 装上就拉起 -->
+    <key>KeepAlive</key>
+    <true/>              <!-- 崩了自动拉起 -->
+    <key>ThrottleInterval</key>
+    <integer>5</integer> <!-- 崩了等 5 秒再拉, 防紧密死循环 -->
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <!-- ===== 优雅退出 ===== -->
+    <key>ExitTimeOut</key>
+    <integer>120</integer>   <!-- 收到信号后给 120s 跑完手头活 -->
+
+    <!-- ===== 日志 ===== -->
+    <key>StandardOutPath</key>
+    <string>/tmp/vps-server-worker.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/vps-server-worker.err</string>
+</dict>
+</plist>
