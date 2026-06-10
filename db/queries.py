@@ -114,7 +114,7 @@ def query_ip_status(
 
     返回形状 (test/mcp_tools/spec.md §6.4, ⭐ 一条龙):
       {"status": "ok",
-       "ip":   {"id", "egress_ip", "country_code", "status", "expire_date"},
+       "ip":   {"id", "egress_ip", "country_code", "expire_date"},
        "task": {"id", "status", "last_error_code", "last_error_msg",
                 "completed_at"} | None,
        "proxy_node": {"vps_id", "vps_ip", "vps_port", "protocol",
@@ -168,7 +168,6 @@ def query_ip_status(
                 "id": ip.id,
                 "egress_ip": ip.egress_ip,
                 "country_code": ip.country_code,
-                "status": ip.status,
                 "expire_date": (
                     ip.expire_date.isoformat()
                     if ip.expire_date is not None

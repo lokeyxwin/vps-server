@@ -18,8 +18,6 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from db.models import (
-    IPRecord,
-    IPStatus,
     IPTask,
     ProxyRecord,
     TaskStatus,
@@ -109,10 +107,15 @@ class TestInnerPingRollback(unittest.TestCase):
         with self.Session() as s:
             self.assertEqual(s.query(ProxyRecord).count(), 0)
 
-    def test_tc09d_ip_status_unchanged_usable(self):
+    def test_tc09d_no_proxy_record_for_ip(self):
+        """ADR-0010: '这条 IP 没在用' = 没 proxy_record 指向它 (代替旧 ip.status=USABLE)."""
         with self.Session() as s:
-            ip = s.get(IPRecord, self.ip_id)
-            self.assertEqual(ip.status, IPStatus.USABLE)
+            proxy = (
+                s.query(ProxyRecord)
+                .filter(ProxyRecord.ip_id == self.ip_id)
+                .first()
+            )
+            self.assertIsNone(proxy, "失败回滚后不应有 proxy_record 指向本 IP")
 
     def test_tc09e_vps_count_not_incremented(self):
         with self.Session() as s:

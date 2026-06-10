@@ -161,6 +161,18 @@
 3. 用户原话节选段加本次对话原话
 ```
 
+#### 改 `test/proxy_deploy_worker/spec.md` (实现窗口反问后补入, 需求窗口疏漏)
+
+```text
+1. §6 收尾伪代码段 L166-170 删 `# ip_record: usable → using` + `ip.status = IPStatus.USING` 两行
+2. 升 v1.1 → v1.2, 修订历史加: v1.2 2026-06-10 §6 收尾伪代码去掉 ip.status=USING (随 ADR-0010 / T-21)
+```
+
+> 注: ADR-0010 §影响清单 漏列了 `test/proxy_deploy_worker/spec.md`, 实现窗口照
+> 任务单 §2 实施时发现 spec 里有伪代码段写了 `ip.status = IPStatus.USING`,
+> 按 CLAUDE.md §5.6 停下来反问需求窗口, 需求窗口确认本任务一并改并补入本清单。
+> ADR-0010 本身不动 (永不改原则)。
+
 #### 不动
 
 - `db/models.py::ProxyStatus` (3 档真业务状态)
@@ -224,13 +236,44 @@ PYTHONPATH=. uv run pytest test/_data_structures test/ip_probe_worker test/proxy
 
 ```text
 改动文件:
-- <path>
+生产代码 (4 文件):
+- db/models.py         删 class IPStatus 整段 + IPRecord.status 字段 + from_form status 入参
+- db/queries.py        query_ip_status 返回 dict 去掉 "status": ip.status, docstring 同步改
+- tools/get_ip_registration_status.py
+                       description 重写: 加 task.status=done+proxy_node=null 异常分支, 删 ip.status 反例
+- workers/proxy_deploy_worker.py
+                       删 IPStatus import + _mark_done 里 ip.status = IPStatus.USING 一行 + docstring 同步
+- workers/ip_probe_worker.py
+                       删 IPStatus import + 顶部 docstring 提及 + _persist_and_dispatch docstring 同步
+
+测试 (5 文件):
+- test/_data_structures/test_ip_record_status.py            整文件删 (6 TC 整体随枚举失效)
+- test/proxy_deploy_worker/_helpers.py                      insert_ip 去掉 status 入参 + ip.status=status 一行
+- test/proxy_deploy_worker/TC-07_full_happy_using.py        删 IPStatus import; tc07e 改为 proxy_record 存在性断言
+- test/proxy_deploy_worker/TC-09_inner_ping_rollback.py     删 IPStatus import; tc09d 改为 proxy_record 不存在断言
+- test/ip_probe_worker/TC-08_queued_success.py              删 IPStatus import + rec.status 断言
+
+spec (2 文件):
+- test/ip_probe_worker/spec.md                              v2 → v3: §1 §3 §6 §9 §F §G 同步去 status, 修订历史加 v3
+- test/proxy_deploy_worker/spec.md                          v1.1 → v1.2: §6 收尾伪代码删 ip.status=USING 两行 (任务单 §2 补遗)
+
+任务单 (1 文件):
+- task/doing_21_*.md                                        §2 补 test/proxy_deploy_worker/spec.md 改动条目 (反问后补入)
 
 测试结果:
-- <command> -> <result>
+- PYTHONPATH=. uv run pytest test/_data_structures test/ip_probe_worker/TC-*.py
+                            test/proxy_deploy_worker/TC-*.py test/xray_worker/TC-*.py
+                            test/mcp_tools/TC-*.py
+  → 211 passed, 3 skipped (skip 都是预存的真机 / 锁原子性 TC, 跟本次无关)
 
 偏差 / 风险:
-- <none | details>
+- 需求窗口疏漏: ADR-0010 §影响清单漏列 test/proxy_deploy_worker/spec.md
+  伪代码段 (L166-170) 里 ip.status = IPStatus.USING 两行。实现窗口照清单实施时
+  发现该 spec 跟代码冲突, 按 CLAUDE.md §5.6 停下来反问需求窗口。
+  需求窗口确认本任务一并改并补入任务单 §2 (本任务单 §2 已补)。
+  ADR-0010 本身不动 (永不改原则), 留作"档案瑕疵"。
+- dev SQLite 重建步骤: 实现窗口完成代码 + 测试后不自动 rm 数据库, 用户手动跑:
+  rm vps_server.db && PYTHONPATH=. uv run python main.py init-db
 ```
 
 ---
@@ -238,12 +281,36 @@ PYTHONPATH=. uv run pytest test/_data_structures test/ip_probe_worker test/proxy
 ## 完成记录 (done 时追加)
 
 ```text
-完成日期:
-完成 commit:
+完成日期: 2026-06-10
+完成 commit: (跟本任务单同 commit, 见 git log)
 任务状态: doing -> done
+
 改动摘要:
+- 删除 IPStatus 枚举类 + IPRecord.status 字段 + from_form status 入参 (db/models.py)
+- 删除 query_ip_status 返回 dict 的 "status": ip.status 字段 (db/queries.py)
+- 删除 ProxyDeployWorker / IPProbeWorker 的 IPStatus import + 触点 (workers/*.py)
+- 重写 get_ip_registration_status description 判定规则:
+  task.status=done + proxy_node != null = "配好", proxy_node=null = 异常 (tools/*.py)
+- 整文件删 test_ip_record_status.py 6 TC (字段没了 schema TC 无意义)
+- TC-07 / TC-09 改为 proxy_record 存在性断言代替旧 ip.status 断言
+- _helpers.py / TC-08 同步去 IPStatus
+- spec.md 双升: ip_probe_worker v2→v3, proxy_deploy_worker v1.1→v1.2
+
 测试命令:
-测试结果:
+PYTHONPATH=. uv run pytest test/_data_structures test/ip_probe_worker/TC-*.py
+              test/proxy_deploy_worker/TC-*.py test/xray_worker/TC-*.py
+              test/mcp_tools/TC-*.py
+
+测试结果: 211 passed, 3 skipped (预存 skip, 跟本次无关), 0 failed
+
 未覆盖风险:
+- ADR-0010 §影响清单漏列 test/proxy_deploy_worker/spec.md 一项, 实现窗口反问后补入
+  任务单 §2; ADR 本身不动 (永不改原则), 留作"档案瑕疵"
+- 真机端到端验证 (跑一次 register_vps 走纳管路径审 DB) 留给用户手动执行;
+  实现窗口确认: dev SQLite 由用户手动 rm vps_server.db + python main.py init-db 重建
+
 后续任务:
+- 跑过 dev 库重建 + 真机端到端纳管 1 次, 确认 ip_record 表无 status 列且业务流不受影响
+- 未来加 CleanupWorker / ExpiryWorker 时, "释放 IP 回池子" 直接走删 proxy_record 即可,
+  不需要再维护 IP 表上的状态字段 (ADR-0010 §决策 §2 已论证)
 ```

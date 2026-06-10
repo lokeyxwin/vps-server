@@ -15,7 +15,6 @@ from sqlalchemy.orm import sessionmaker
 from db.base import Base
 from db.models import (
     IPRecord,
-    IPStatus,
     IPTask,
     ProxyRecord,
     TaskStatus,
@@ -140,9 +139,8 @@ def insert_ip(
     username: str = "upuser",
     password: str = "uppwd",
     protocol: str = "socks5",
-    status: str = IPStatus.USABLE,
 ) -> IPRecord:
-    """插一行 IPRecord(默认 status=usable, ProxyDeployWorker 期望的入口状态)."""
+    """插一行 IPRecord(ProxyDeployWorker 期望的入口形态)."""
     ip = IPRecord.from_form(
         entry_host=entry_host,
         entry_port=entry_port,
@@ -152,7 +150,6 @@ def insert_ip(
         egress_ip=egress_ip,
         geo={"country_code": country_code, "country_name": "", "city": "", "region_name": ""},
     )
-    ip.status = status
     s.add(ip)
     s.flush()
     return ip

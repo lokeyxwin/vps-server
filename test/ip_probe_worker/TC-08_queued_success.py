@@ -31,7 +31,7 @@ from unittest.mock import MagicMock, patch
 
 from sqlalchemy import text
 
-from db.models import IPRecord, IPStatus, IPTask, TaskStatus
+from db.models import IPRecord, IPTask, TaskStatus
 from workers.ip_probe_worker import IPProbeWorker
 
 from ._helpers import (
@@ -113,8 +113,6 @@ class TestQueuedSuccess(unittest.TestCase):
             recs = s.query(IPRecord).all()
             self.assertEqual(len(recs), 1)
             rec = recs[0]
-            self.assertEqual(rec.status, IPStatus.USABLE)
-            self.assertEqual(rec.status, "usable")
             self.assertEqual(rec.is_active, 1)
             self.assertEqual(rec.egress_ip, _ACTUAL_EGRESS)
             self.assertEqual(rec.country_code, "US")

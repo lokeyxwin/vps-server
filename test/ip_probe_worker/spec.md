@@ -1,6 +1,6 @@
 # IPProbeWorker 行为规约(spec.md)
 
-**版本**: v2(2026-06-08)
+**版本**: v3(2026-06-10)
 **模块**: `workers/ip_probe_worker.py`(待实现)
 **类型**: 同步业务工人(rgip MCP 工具的同步段)
 **对应 ADR**:
@@ -19,7 +19,7 @@ IPProbeWorker 是 rgip MCP 工具入口的**同步段工人**:
 - 接收用户提交的上游 IP 凭据(代理主机/入口端口/账号/密码/协议/声明出口 IP/...)
 - 用 `probe_vps.PROBE_VPS_POOL` 里的测试 VPS SSH 上去
 - 在测试 VPS 上**临时挂这条凭据当 xray outbound**,**内 ping** 验证它能不能用
-- 通过 → 入 `ip_record`(`status=usable`)+ 派 `ip_task`(pending)给 ProxyDeployWorker
+- 通过 → 入 `ip_record` + 派 `ip_task`(pending)给 ProxyDeployWorker
 - 不通过 → 不入库,清测试 VPS 残留,抛回错误
 
 **MCP 边界外部串行**:rgip 工具的 `Tool.description` 会写明"多条 IP 请一条一条提交,等上一条返回再提交下一条"。工人内部**不加测试 VPS 并发锁**(YAGNI)。
@@ -94,7 +94,7 @@ ProxyDeployWorker(异步,见后续 spec)
         - 命中 duplicate → 清残留 + 抛回(兜住声明 ≠ 实测的二货场景)
   │
   ⑦ 同步段收尾(都在同一会话里完成,不出 SSH):
-        - 写 ip_record(status=usable, is_active=1, 只入实测值)
+        - 写 ip_record(is_active=1, 只入实测值)
         - 派 ip_task(status=pending, ip_id=新 id, vps_id=NULL)
         - 拆 19000 测试配置(remove outbound + inbound + 路由三件套)
         - close SSH 连接
@@ -119,23 +119,16 @@ ProxyDeployWorker(异步,见后续 spec)
 
 ### 6. 状态字段语义
 
-#### `ip_record.status`(新增字段,本 spec 引入)
-
-```python
-class IPStatus:
-    USABLE = "usable"   # IPProbeWorker 校验通过 + 入库的初始态; 等 ProxyDeployWorker 来挑
-    USING  = "using"    # ProxyDeployWorker 把这条 IP 真正挂到某台生产 VPS 后改成 using
-```
-
-- **IPProbeWorker 入库时永远写 `usable`**
-- ProxyDeployWorker 配置成功的同一事务里改成 `using`(本 spec 不展开,见后续 proxy spec)
-- 配置失败:`ip_record.status` 不动还是 `usable`(下一次任务重新挑 VPS 挂)
+> v3(ADR-0010): `ip_record.status` 字段已删除。"这条 IP 在不在用"
+> 的真相源 = `proxy_record` 是否有 `ip_id` 指向它(且 `status<>'inactive'`),
+> 不再用 IP 表里的 derived 字段。下面 ProxyDeployWorker 挑机查询同步改成
+> `LEFT JOIN proxy_record ... WHERE proxy_record.id IS NULL`。
 
 #### `ip_record.is_active`(已有字段,不动)
 
 - `is_active=1` 默认;巡检模块(未来)看 `expire_date` 过期标 0
-- 跟 `status` 是**独立维度**:`is_active` 表达"整体还有效",`status` 表达"当前在不在被用"
-- ProxyDeployWorker 挑机查询:`is_active=1 AND status='usable'`
+- 表达"整体还有效"(过期/手动停用判定);"当前在不在用"由 proxy_record 存在性表达
+- ProxyDeployWorker 挑 IP 时:`ip.is_active=1 AND 没 proxy_record 指向它`
 
 #### `ip_task.vps_id`(新增字段, nullable, 谁配的谁写)
 
@@ -168,7 +161,6 @@ class IPStatus:
 
 ### 9. 不变量
 
-- 入库时 `ip_record.status` **永远写 `usable`**
 - 入库时 `ip_record.is_active` **永远写 `1`**
 - 入库时只写**实测值**(`egress_ip = actual_egress_ip`, `country_* = geoip 返回值`)
 - 派 `ip_task` 时 `vps_id` **永远写 NULL**(谁配的谁写)
@@ -272,31 +264,21 @@ class IPStatus:
 | `_apply_test_outbound(xm, entry_host, entry_port, user, pwd, protocol)` | ③+④ | 用 `build_proxy_outbound` + `generate_random_auth` 造 outbound + inbound 账密,调 `xm.replace_proxy_binding(19000, ...)`,返回 `(last_config, test_inbound_user, test_inbound_pwd)` |
 | `_classify_proxy_error(exit_code, stderr)` | ④ | curl exit code / stderr → status(auth_failed / timeout / refused / failed) |
 | `_probe_and_resolve(xm, test_inbound_user, test_inbound_pwd)` | ④+⑤ | 调 `test_internal_socks(19000, test_inbound_user, test_inbound_pwd)`;通 → geoip 拿 country;不通 → 调 `_classify_proxy_error` |
-| `_persist_and_dispatch(actual_egress_ip, geo, entry_*, ...)` | ⑦ | **同事务** 写 `ip_record(status=usable, is_active=1)` + `ip_task(pending, vps_id=NULL)` |
+| `_persist_and_dispatch(actual_egress_ip, geo, entry_*, ...)` | ⑦ | **同事务** 写 `ip_record(is_active=1)` + `ip_task(pending, vps_id=NULL)` |
 | `_cleanup_probe(xm, last_config)` | try/finally 兜底 | 调 `xm.rollback_proxy_binding(19000, last_config)` 拆三件套(失败也走) |
 
 ### G. 新增 / 改的字段和表(走 db 改造任务单)
 
+> v3(ADR-0010): 原 `IPStatus` 常量类 + `IPRecord.status` 字段 + 工厂 status 入参
+> 已全删,本节相应条目去除。`IPTask` 表 / `probe_vps.py` 等保留有效。
+
 | 改动 | 文件 | 状态 |
 |---|---|---|
-| `IPStatus` 常量类(`USABLE / USING`) | `db/models.py` 改 | 新加 |
-| `IPRecord.status` 字段(`String(16)`, default=USABLE) | `db/models.py` 改 | 新加列 |
-| `IPRecord.from_form` 默认带 `status=IPStatus.USABLE` | `db/models.py` 改 | 改工厂方法 |
 | `IPTask` 表(1:1 对称 VPSTask,`vps_id` nullable,谁配的谁写) | `db/models.py` 改 | 新建表 |
 | `PROBE_VPS_POOL` 清单 + `PROBE_TEST_PORT=19000` 常量 | `probe_vps.py` 新建 | T-10 已落任务单 |
 
 ```python
 # db/models.py 追加片段:
-class IPStatus:
-    """ip_record.status 状态机(IPProbeWorker / ProxyDeployWorker 协同维护)。
-    
-    USABLE: IPProbeWorker 校验通过 + 入库的初始态; 等 ProxyDeployWorker 来挑
-    USING : ProxyDeployWorker 把这条 IP 真正挂到某台生产 VPS 后改成 using
-    """
-    USABLE = "usable"
-    USING = "using"
-
-
 class IPTask(Base):
     """IP 挂机部署任务。ProxyDeployWorker 消费。
     
@@ -335,12 +317,24 @@ class IPTask(Base):
 
 - ProxyDeployWorker 挑机查询:`SELECT * FROM vps_record WHERE stage='connectable' AND xray_version != '' AND is_active=1 ORDER BY used_port_count ASC`
   —— **按 `used_port_count` 升序挑(已用最少的优先)**(2026-06-08 用户拍)
-- 配置成功**同一事务**写:`ip_task.status='done'` + `ip_record.status='using'` + `vps.stage='connectable'`(释放资源锁) + 写 `proxy_record`
-- 配置失败:`ip_task` 重试 / 终态 failed,`ip_record.status` **不动**(还是 usable,下次任务重新挑 VPS)
+- 配置成功**同一事务**写:`ip_task.status='done'` + `vps.stage='connectable'`(释放资源锁) + INSERT `proxy_record`(`ip_id` 指向本 IP)
+- 配置失败:`ip_task` 重试 / 终态 failed,**不写** `proxy_record`(代替旧的 `ip_record.status` 不动 ——
+  v3 ADR-0010 删字段后,"在不在用" 直接看 proxy_record 是否存在)
 
 ---
 
 ## 四、修订历史
+
+- v3 2026-06-10: 删 `ip_record.status` 字段同步 (ADR-0010)。
+  - §1 工人定位 去掉"入库 status=usable"措辞
+  - §3 主流程 ⑦ 步去掉"status=usable"措辞
+  - §6 整段重写: 删 `ip_record.status` / IPStatus 子节, 用 proxy_record 存在性表达"在不在用",
+    is_active 子节同步去掉"跟 status 独立维度"措辞
+  - §9 不变量 去掉"入库 status 永远写 usable"一条
+  - §F `_persist_and_dispatch` 行为说明去掉 status
+  - §G IPStatus / IPRecord.status / from_form status 入参三条同步去掉,
+    代码片段 class IPStatus 整段删
+  - 用户口述原话节录在 ADR-0010
 
 - v2 2026-06-08: §二 工具清单从"大类占位"升级为基于代码现状的完整真假判定。
   - §A VPSSession / §B XrayManager / §C xray.config 全部标"✅ 已有"+ 当前路径行号

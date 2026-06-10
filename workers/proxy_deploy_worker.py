@@ -33,7 +33,6 @@ from sqlalchemy import or_
 import config as app_config
 from db.models import (
     IPRecord,
-    IPStatus,
     IPTask,
     ProxyRecord,
     ProxyStatus,
@@ -523,10 +522,9 @@ class ProxyDeployWorker:
         egress_country: str,
         outer_ping_ok: bool,
     ) -> None:
-        """成功收尾: 同事务一次写 proxy_record / ip / vps / task (spec §6).
+        """成功收尾: 同事务一次写 proxy_record / vps / task (spec §6).
 
         - proxy_record: INSERT 新行, status = using 或 pending_fw
-        - ip_record: usable → using
         - vps: used_port_count +1, stage='running' → 'connectable' (释放资源锁)
         - ip_task: in_progress → done
         """
@@ -545,10 +543,6 @@ class ProxyDeployWorker:
             )
             proxy.status = ProxyStatus.USING if outer_ping_ok else ProxyStatus.PENDING_FW
             s.add(proxy)
-
-            ip = s.get(IPRecord, ip_id)
-            if ip is not None:
-                ip.status = IPStatus.USING
 
             vps = s.get(VPSRecord, vps_id)
             if vps is not None:

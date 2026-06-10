@@ -1,21 +1,21 @@
-"""IPProbeWorker —— rgip MCP 工具的同步段主工人(spec v2)。
+"""IPProbeWorker —— rgip MCP 工具的同步段主工人(spec v3)。
 
 干啥:
   接 1 条上游 IP 凭据, 用测试 VPS 校验账密+端口能不能通, 通过 → 入 ip_record
-  (status=usable) + 派 ip_task(pending, vps_id=NULL) 给 ProxyDeployWorker。
+  + 派 ip_task(pending, vps_id=NULL) 给 ProxyDeployWorker。
   跟 SSHWorker 平行(SSHWorker 是 rgvps 的同步段)。
 
 谁会调我:
   tools/rgip.py (MCP 工具入口, T-14)
 
-我用到的工具(完全照 spec v2 §二 工具清单):
+我用到的工具(完全照 spec v3 §二 工具清单):
   - probe_vps.get_probe_vps_pool / NO_PROBE_VPS_MESSAGE / PROBE_TEST_PORT
   - ssh.session.VPSSession
   - xray.manager.XrayManager.replace_proxy_binding / rollback_proxy_binding
   - xray.config.build_proxy_outbound / generate_random_auth / PROTOCOL_SOCKS5 等
   - xray.service.test_internal_socks(T-12 改后, 含 exit_code/stderr)
   - toolbox.geoip.lookup_egress
-  - db.models: IPRecord / IPTask / IPStatus / TaskStatus
+  - db.models: IPRecord / IPTask / TaskStatus
 
 私有方法(下划线开头, spec §F 锚点):
   _lookup_by_declared / _lookup_by_actual / _pick_probe_vps /
@@ -37,7 +37,7 @@ from __future__ import annotations
 import time
 from datetime import date
 
-from db.models import IPRecord, IPStatus, IPTask, TaskStatus
+from db.models import IPRecord, IPTask, TaskStatus
 from db.session import session_scope
 from log import get_logger
 from probe_vps import (
@@ -532,10 +532,9 @@ class IPProbeWorker:
         expire_date: date | None,
         user_label: str,
     ) -> dict:
-        """同事务写 ip_record(status=usable) + ip_task(pending, vps_id=NULL)。
+        """同事务写 ip_record + ip_task(pending, vps_id=NULL)。
 
         spec §9 不变量:
-          - ip_record.status = usable
           - ip_record.is_active = 1 (ORM default)
           - egress_ip / country_* = 实测值 (geo 来自 lookup_egress)
           - ip_task.vps_id = NULL (谁配的谁写)

@@ -311,29 +311,6 @@ class IPProtocol:
     HTTP = "http"
 
 
-class IPStatus:
-    """ip_record.status 状态机(IPProbeWorker / ProxyDeployWorker 协同维护)。
-
-    谁推进:
-      IPProbeWorker 入库时       → 永远写 USABLE
-      ProxyDeployWorker 配置成功 → 同事务改成 USING
-      ProxyDeployWorker 配置失败 → 不动 status(保持 USABLE,下次任务重新挑 VPS)
-
-    业务含义:
-      USABLE = IPProbeWorker 校验通过,等 ProxyDeployWorker 来挑
-      USING  = 已被某台生产 VPS 挂上,真正在用
-
-    跟 is_active 是独立维度:
-      is_active = 整体还有效(过期标 0)
-      status    = 当前在不在被用(业务流转)
-
-    详见 test/ip_probe_worker/spec.md v2 §6。
-    """
-
-    USABLE = "usable"
-    USING = "using"
-
-
 class IPRecord(Base):
     """上游代理 ORM 模型（一行 = 一条 egress_ip）。
 
@@ -378,12 +355,6 @@ class IPRecord(Base):
     is_active: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     # 用户自定义备注，不参与查询匹配
     user_label: Mapped[str] = mapped_column(String(64), default="", nullable=False)
-
-    # ---------- 业务流转状态机（T-11 新增, spec v2 §6）----------
-    # IPProbeWorker 入库时永远写 USABLE；ProxyDeployWorker 配置成功改 USING
-    status: Mapped[str] = mapped_column(
-        String(16), default=IPStatus.USABLE, nullable=False
-    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
@@ -439,7 +410,6 @@ class IPRecord(Base):
             provider_domain=provider_domain,
             expire_date=expire_date,
             user_label=user_label,
-            status=IPStatus.USABLE,
         )
 
     def __repr__(self) -> str:

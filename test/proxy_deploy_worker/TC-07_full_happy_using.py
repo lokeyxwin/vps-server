@@ -5,14 +5,14 @@ TC-07 全链路 happy path: 内通 + 外通 → done + using (spec §3 §6)
 故事:
   挑机 → 挑端口 → apply_proxy_binding 成功 → firewall 放行成功
   → 内 ping 通 → 外 ping 通
-  → 收尾: 同事务一次写 proxy_record / ip / vps / task 4 表
+  → 收尾: 同事务一次写 proxy_record / vps / task 3 表 (ADR-0010 删 ip.status 后)
 
 测试矩阵 (含 inbound 账密 2 个断言, 需求窗口 2026-06-09 拍板):
   TC-07-a 返回 {"status":"done", task_id, vps_id, vps_port, outer_ping_ok=True}
   TC-07-b proxy_record INSERT: status=USING, vps_id/vps_port/ip_id 正确
   TC-07-c proxy_record.inbound_user = "proxy_{ip.id}" ⭐ 账密规则验证
   TC-07-d proxy_record.inbound_pwd_encrypted: 解密后长度 == 32 (uuid4().hex)
-  TC-07-e ip_record.status: usable → using
+  TC-07-e proxy_record 存在且 ip_id 指向这条 IP (替代旧 ip.status 断言, ADR-0010)
   TC-07-f vps.used_port_count +1, vps.stage 从 running → connectable (释放)
   TC-07-g ip_task: in_progress → done, last_error_code 清空
   TC-07-h apply_proxy_binding 被调用一次, rollback 没被调
@@ -25,8 +25,6 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from db.models import (
-    IPRecord,
-    IPStatus,
     IPTask,
     ProxyRecord,
     ProxyStatus,
@@ -146,10 +144,16 @@ class TestFullHappyUsing(unittest.TestCase):
             self.assertTrue(all(c in "0123456789abcdef" for c in pwd))
 
     # ---------- TC-07-e ----------
-    def test_tc07e_ip_status_usable_to_using(self):
+    def test_tc07e_proxy_record_linked_to_ip(self):
+        """ADR-0010: ip.status 字段删除后, '这条 IP 在用' 的真相源是 proxy_record."""
         with self.Session() as s:
-            ip = s.get(IPRecord, self.ip_id)
-            self.assertEqual(ip.status, IPStatus.USING)
+            proxy = (
+                s.query(ProxyRecord)
+                .filter(ProxyRecord.ip_id == self.ip_id)
+                .first()
+            )
+            self.assertIsNotNone(proxy,
+                                 "完工后 proxy_record 必有一条 ip_id 关联本 IP")
 
     # ---------- TC-07-f ----------
     def test_tc07f_vps_count_plus_one_and_lock_released(self):

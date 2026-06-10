@@ -1,6 +1,6 @@
 # ProxyDeployWorker 行为规约（spec.md）
 
-**版本**: v1（2026-06-09 初版）
+**版本**: v1.2（2026-06-10）
 **模块**: `workers/proxy_deploy_worker.py`
 **类型**: 异步 task 工人
 **对应 ADR**:
@@ -164,9 +164,6 @@ with session_scope() as s:
     proxy.status = ProxyStatus.USING if 外通 else ProxyStatus.PENDING_FW
     s.add(proxy)
 
-    # ip_record: usable → using
-    ip.status = IPStatus.USING
-
     # vps: used_port_count +1, 释放资源锁
     vps.used_port_count += 1
     vps.stage = VPSStage.CONNECTABLE
@@ -264,3 +261,4 @@ with session_scope() as s:
 
 - v1 2026-06-09 初版（对应 ADR-0006 落地）
 - v1.1 2026-06-09 §6 inbound 账密生成规则敲定（user=f"proxy_{ip.id}", pwd=uuid4().hex），跟 T-16 实现 + TC 同 commit 落
+- v1.2 2026-06-10 §6 收尾伪代码去掉 `ip.status = IPStatus.USING` 两行（随 ADR-0010 / T-21 删 `ip_record.status` 字段;真相源改为 proxy_record 存在性）
