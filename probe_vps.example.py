@@ -7,7 +7,7 @@
 1. 往 ~/.zshrc.local §04 节追加 4 条 export(N=1..3 按需):
      export PROBE_VPS_1_IP="x.x.x.x"
      export PROBE_VPS_1_PORT="22"
-     export PROBE_VPS_1_USER="root"
+     export PROBE_VPS_1_USER="root"           # ⚠️ 必须 root, 见下
      export PROBE_VPS_1_PWD="<password>"
 2. source ~/.zshrc.local (或新开终端)
 3. 启动业务进程 (mcp_server / dev smoke / pytest) 时会读到这些 env
@@ -17,6 +17,16 @@
 工人侧: VPSSession(**pool[0]) 展开即用。
 
 PROBE_VPS_POOL 长度 1-3 (由 _MAX_PROBE_SLOTS 控制)。
+
+⚠️ PROBE_VPS_N_USER 必须是 root (T-19 真机验证经验):
+- 装 xray (xray.service.INSTALL_COMMAND 不带 sudo) 要 root
+- 写 /usr/local/etc/xray/config.json + systemctl reload xray 也要 root
+- 云厂商默认的 ubuntu / centos / admin 直接配进去, init-probe-vps 必挂
+  (`error: You must run this script as root!` 或 `Permission denied`)
+- 修法见根 README §3.4 "关于 SSH 用户权限" 小节: 测试机上 sudo passwd root
+  + 改 sshd PermitRootLogin yes + 重启 sshd, 然后把 env 改成 root 用户.
+- 项目当前不做权限预检, 失败 message 已经够清晰 (含 'Permission denied' 关键字),
+  agent 收到 probe_vps_not_ready 应当引导用户切 root.
 """
 
 import os

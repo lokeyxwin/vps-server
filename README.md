@@ -191,6 +191,41 @@ PYTHONPATH=. uv run python main.py init-probe-vps
 - 换测试 VPS / 测试机 xray 挂了 → 重跑 `init-probe-vps`
 - agent 查询时看到 `probe_vps_not_ready` → 重跑 `init-probe-vps`
 
+**⚠️ 关于 SSH 用户权限**(T-19 真机验证经验):
+
+`init-probe-vps` 走的 SSH 用户(`PROBE_VPS_N_USER`)必须能 **写
+`/usr/local/etc/xray/`** + **跑 `systemctl reload xray`** —— 也就是
+**root 或带免密 sudo 的用户**。
+
+云服务商默认给的非 root 账号(`ubuntu` / `centos` / `admin` 等)直接配进去会挂:
+
+| 阶段 | 报错 |
+|---|---|
+| install | `error: You must run this script as root!` → 退码 1 |
+| add inbound (步⑤) | `bash: /usr/local/etc/xray/config.json: Permission denied` |
+
+错误 message 会清晰返回 `probe_vps_not_ready + Permission denied / 必须 root`,
+**agent 收到这个 status 应当引导用户切 root**,而不是让用户对着权限错误自己排查。
+
+两种修法选一个 ——
+
+**1. 直接给 root**(推荐,测试机我们自己的,安全可控):
+
+```bash
+# 测试机上, 在云厂商账号 (如 ubuntu) 的 shell 里
+sudo passwd root                                                          # 设 root 密码
+sudo sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+sudo systemctl restart ssh
+# 嫌设新密码麻烦, 可以一行把 root 密码 hash 跟现有用户同步 (密码不入 chat):
+# sudo usermod -p "$(sudo getent shadow ubuntu | cut -d: -f2)" root
+```
+
+然后改 `~/.zshrc.local`:`PROBE_VPS_N_USER="root"` + 对应 PWD 改成 root 密码,
+`source ~/.zshrc.local` 重新跑 `init-probe-vps`。
+
+**2. 给非 root 账号开免密 sudo**(配套要改 `xray/service.py` 命令加 sudo 前缀,
+当前项目未做,真有需求再单独开 task)。
+
 ### 3.5 手动跑通确认
 
 ```bash

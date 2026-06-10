@@ -731,7 +731,7 @@ print(json.dumps(result, ensure_ascii=False, indent=2))
 
 ```text
 完成日期: 2026-06-10
-完成 commit: (commit 后填)
+完成 commit: d39be50
 任务状态: doing -> done
 
 改动摘要:
@@ -794,21 +794,34 @@ print(json.dumps(result, ensure_ascii=False, indent=2))
 - 必跑 4 目录: 141 passed, 0 failed
 - 全套回归 (+ db/ssh/proxy/xray): 294 passed, 2 skipped (原本 skip 真机)
 
-启动验证:
+启动验证 (T-19 commit d39be50 后, T-20 期间补真机端到端):
 - PYTHONPATH=. uv run python main.py --help        → 看到 init-probe-vps 子命令 ✓
 - PYTHONPATH=. uv run python main.py init-probe-vps --help → 看到 --slot ✓
 - env 空 init-probe-vps                              → 退 1 + NO_PROBE_VPS_MESSAGE ✓
-- source ~/.zshrc.local + init-probe-vps             → SSH 通 (203.0.113.20 ubuntu) ✓,
-  install 阶段失败 (测试机 GitHub 网络不通) → ProbeVPSSetupFailed 正确抛 +
-  退码 1 + 详细 message (含"无法访问 GitHub" 排查指引)
+- 第一次跑 (PROBE_VPS_1_USER=ubuntu) → SSH 通 ✓,但 install 阶段 stderr 截断
+  误判 "GitHub 网络不通"; 后续测试机端 curl 实测 raw.githubusercontent.com
+  能通 (31219 字节, 634 KB/s), DNS / TLS / objects 全通; 真正根因是
+  install-release.sh 内部 `error: You must run this script as root!` —
+  paramiko 用 ubuntu 用户跑没 root 权限.
+- 测试机 sudo 装好 xray + 改 PROBE_VPS_1_USER=root 后, T-20 期间真机端到端:
+  - 11:25:02 init-probe-vps (xray 已装路径) → 2 秒完成, 退码 0 ✓
+    SSH 通 → is_installed=True 跳过 install → is_running=True 跳过 start
+    → 19000 没 inbound add+reload → 返回 handle
+  - 11:27:14 卸载 xray 重跑 (全新装机路径) → 11 秒完成, 退码 0 ✓
+    SSH 通 → is_installed=False 跑 install (~9s) → is_running=True (install
+    自带 enable+start) → add 19000 inbound (~1s) → 返回 handle
+  → ADR-0009 §3 6 步全路径 + 幂等路径双向真机闭环验证拿到
 
 偏差 / 风险:
-- 任务简报期望"实测装好测试机", 但实测时测试机 (203.0.113.20) 访问 GitHub
-  Xray-install 脚本被劫持/不通 (curl 拉脚本 0 字节即结束), install 总是失败.
-  这是测试机自身网络环境问题, **不是 bootstrap 代码 bug** — 反而完整正面验证
-  了 ADR-0009 §决策 §4 ProbeVPSSetupFailed 的设计意图: SSH 通但装失败时,
-  bootstrap 抛出明确的 setup_failed (而不是裸 InstallFailedError 给上层),
-  main 返码 1 + 详细 message 包含 "无法访问 GitHub" 排查指引.
+- 任务简报期望"实测装好测试机", 第一次跑挂在 install 阶段, paramiko stderr
+  截断只看到 curl 进度 (0 字节那行), 误判 "测试机 GitHub 网络不通". 后续
+  T-20 期间在测试机端实测网络 (DNS/TLS/curl 脚本拉到 31219 字节, 634 KB/s)
+  排除网络问题, 真正根因是 INSTALL_COMMAND 不带 sudo + paramiko 用 ubuntu
+  用户跑无 root 权限 (`error: You must run this script as root!`).
+  → 真机端到端在 T-20 补完: 测试机 sudo 装好 + 改 USER=root 后, ADR-0009 §3
+  6 步全路径 + 幂等路径双向闭环验证拿到 (见上"启动验证" 段).
+  → 暴露的隐性约束 (PROBE_VPS_N_USER 必须 root) 由 T-20 docs 补到根 README
+  §3.4 + probe_vps.example.py.
 - 任务简报还要求用 -13 天过期 IP 凭据复现端到端 (期望 proxy_timeout 而非
   proxy_failed). 因测试机 xray 装不上, 这个端到端跑出来必然是
   probe_vps_not_ready (而不是 proxy_*) — 这本身就是 ADR-0009 的设计正确性:
