@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+from config import XRAY_DEFAULT_PORT
 from probe_vps import PROBE_TEST_PORT, ProbeVPSHandle, bootstrap
 
 
@@ -32,7 +33,7 @@ class _FakeSess:
 
 
 def test_fresh_install_start_add_inbound():
-    """完全空白: 装 + 写默认 config + 起 + add 19000 inbound → handle 返回."""
+    """完全空白: 装 + 写默认 config + 起 + add 18440 inbound → handle 返回."""
     fake_xm = MagicMock(name="XrayManager")
     fake_xm.is_installed.return_value = False
     # 装完后 is_running=False 触发 start; start 完后假设不再问 is_running
@@ -56,8 +57,8 @@ def test_fresh_install_start_add_inbound():
     fake_xm.reload.assert_called_once()
 
 
-def test_fresh_uploaded_config_contains_19000_inbound():
-    """upload_config 收到的 dict 必须含 19000 socks/freedom inbound."""
+def test_fresh_uploaded_config_contains_18440_inbound():
+    """upload_config 收到的 dict 必须含 18440 socks/freedom inbound."""
     fake_xm = MagicMock(name="XrayManager")
     fake_xm.is_installed.return_value = False
     fake_xm.is_running.return_value = False
@@ -70,8 +71,8 @@ def test_fresh_uploaded_config_contains_19000_inbound():
 
     uploaded = fake_xm.upload_config.call_args.args[0]
     inbounds = uploaded.get("inbounds", [])
-    probe = [i for i in inbounds if i.get("port") == PROBE_TEST_PORT]
-    assert len(probe) == 1, f"应有 1 条 {PROBE_TEST_PORT} inbound, got: {inbounds}"
+    probe = [i for i in inbounds if i.get("port") == XRAY_DEFAULT_PORT]
+    assert len(probe) == 1, f"应有 1 条 {XRAY_DEFAULT_PORT} inbound, got: {inbounds}"
     assert probe[0]["protocol"] == "socks"
     assert probe[0]["settings"]["auth"] == "noauth"
 

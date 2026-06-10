@@ -1,6 +1,6 @@
 """TC-19-03 bootstrap.ensure_ready 幂等场景 (ADR-0009 §决策 §3 步③④⑤ 已就绪).
 
-测试机已装 + 已跑 + 19000 已有 socks5/freedom inbound → 不调 install / start /
+测试机已装 + 已跑 + 18440 已有 socks5/freedom inbound → 不调 install / start /
 upload_config, 直接返回 handle. 跑 N 次结果一致.
 """
 
@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+from config import XRAY_DEFAULT_PORT
 from probe_vps import PROBE_TEST_PORT, ProbeVPSHandle, bootstrap
 
 
@@ -32,12 +33,12 @@ class _FakeSess:
 
 
 def _ready_config():
-    """构造一份已含 19000 socks/freedom inbound 的 config dict."""
+    """构造一份已含 18440 socks/freedom inbound 的 config dict."""
     return {
         "inbounds": [
             {
                 "tag": "probe-direct",
-                "port": PROBE_TEST_PORT,
+                "port": XRAY_DEFAULT_PORT,
                 "protocol": "socks",
                 "settings": {"auth": "noauth"},
             },

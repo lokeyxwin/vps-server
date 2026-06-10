@@ -7,7 +7,7 @@
     ② SSH 连 → 失败抛 ProbeVPSUnreachable
     ③ xray 没装 → install (失败抛 ProbeVPSSetupFailed)
     ④ xray 没跑 → start (失败抛 ProbeVPSSetupFailed)
-    ⑤ PROBE_TEST_PORT (19000) 上没 socks5/freedom inbound → add + reload
+    ⑤ XRAY_DEFAULT_PORT (18440) 上没 socks5/freedom inbound → add + reload
        (失败抛 ProbeVPSSetupFailed)
     ⑥ 返回 ProbeVPSHandle(host, inbound_port=PROBE_TEST_PORT)
 
@@ -35,6 +35,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from config import XRAY_DEFAULT_PORT
 from log import get_logger
 from probe_vps.config import PROBE_TEST_PORT
 from ssh.ops import (
@@ -126,11 +127,14 @@ def _has_socks5_freedom_inbound(cfg: dict, port: int) -> bool:
 def _append_socks5_freedom_inbound(cfg: dict, port: int) -> dict:
     """往 cfg 追加 socks5(noauth) → freedom inbound, 落在指定端口.
 
-    空 / 缺关键字段的 cfg 用 build_vps_direct_config 起 baseline (默认 18440 段),
-    然后再加一条 PROBE_TEST_PORT 的 probe-direct inbound + routing 规则.
+    空 / 缺关键字段的 cfg 用 build_vps_direct_config 起 baseline (自带
+    default-direct@XRAY_DEFAULT_PORT socks→freedom), 然后看 baseline 是不是
+    已经满足"指定端口有 socks5/freedom inbound"; 满足就直接 return baseline
+    不再追加 (幂等, 避免 port=XRAY_DEFAULT_PORT 时跟 default-direct 双叠).
+    不满足才追加一条 probe-direct inbound + routing 规则.
 
     跟 XrayWorker._append_default_direct 的 'default-direct' tag 区分:
-    本函数用 'probe-direct' tag, 避免跟生产 18440 命名撞.
+    本函数追加分支用 'probe-direct' tag, 避免跟生产 18440 命名撞.
     """
     import copy
 
@@ -143,6 +147,9 @@ def _append_socks5_freedom_inbound(cfg: dict, port: int) -> dict:
     new.setdefault("outbounds", [])
     new.setdefault("routing", {})
     new["routing"].setdefault("rules", [])
+
+    if _has_socks5_freedom_inbound(new, port):
+        return new
 
     probe_tag = "probe-direct"
     probe_inbound = {
@@ -261,18 +268,18 @@ def ensure_ready(entry: dict) -> ProbeVPSHandle:
                 f"{type(exc).__name__}: {exc}"
             ) from exc
 
-        if _has_socks5_freedom_inbound(cfg, PROBE_TEST_PORT):
+        if _has_socks5_freedom_inbound(cfg, XRAY_DEFAULT_PORT):
             logger.info(
                 "ensure_ready: port=%d 已有 socks5/freedom inbound, 跳过 add",
-                PROBE_TEST_PORT,
+                XRAY_DEFAULT_PORT,
             )
         else:
             logger.info(
                 "ensure_ready: port=%d 无 socks5/freedom inbound, add + reload",
-                PROBE_TEST_PORT,
+                XRAY_DEFAULT_PORT,
             )
             try:
-                new_cfg = _append_socks5_freedom_inbound(cfg, PROBE_TEST_PORT)
+                new_cfg = _append_socks5_freedom_inbound(cfg, XRAY_DEFAULT_PORT)
                 xm.upload_config(new_cfg)
                 xm.validate_config()
                 xm.reload()
@@ -282,7 +289,7 @@ def ensure_ready(entry: dict) -> ProbeVPSHandle:
                 XrayError,
             ) as exc:
                 raise ProbeVPSSetupFailed(
-                    f"测试 VPS {host} add inbound (port={PROBE_TEST_PORT}) 失败: "
+                    f"测试 VPS {host} add inbound (port={XRAY_DEFAULT_PORT}) 失败: "
                     f"{type(exc).__name__}: {exc}"
                 ) from exc
 
