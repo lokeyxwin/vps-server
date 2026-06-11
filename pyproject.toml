@@ -12,3 +12,12 @@ dependencies = [
     "requests[socks]>=2.31.0",
     "mcp>=1.27.2",
 ]
+
+[tool.pytest.ini_options]
+# 本项目测试文件用 TC-NN_*.py 命名(详见 test/README.md), 默认 pytest pattern
+# 只收 test_*.py / *_test.py, 不加这条会收到 333/336 中的 39 个, 误导性极大.
+# test.bak/ 是封存对照代码, 不进收集(也在 .gitignore 不进库).
+python_files = ["test_*.py", "TC-*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "--ignore=test.bak"
