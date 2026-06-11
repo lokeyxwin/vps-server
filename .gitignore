@@ -45,3 +45,6 @@ test.bak/
 
 # Claude Code 本地配置 / hook 脚本 / 运行态(整目录不进库)
 .claude/
+
+# skill-creator 模板工具(本地造 skill 用, 不进库; 产出的 skills/ 进库)
+skill-creator/
