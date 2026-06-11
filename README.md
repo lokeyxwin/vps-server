@@ -528,6 +528,46 @@ startup_timeout_sec = 120
 | admin / user 端口写反 | user 拿到 admin 权限(权限边界破了) | 严格 47180=admin / 47181=user |
 | 监听 0.0.0.0 不绑 127.0.0.1 | admin 端点对公网暴露,任何人能调 register_vps | 必须绑 127.0.0.1,agent 同机访问 |
 
+### 5.3 配套 skill 安装(连上 MCP 后做)
+
+本仓库 `skills/` 目录是 MCP 服务的**配套 skill** — 教 agent 怎么正确使用这套
+MCP 工具(典型场景 / 调用姿势 / 交付格式 / 反例)。连好 MCP 后把 skill 装进
+客户端,agent 的使用质量会明显好于裸看工具列表。
+
+| skill | 配套壳 | 干什么 |
+|---|---|---|
+| `get-available-proxy-nodes` | user 壳 | 教 agent 查可用代理节点 + 小火箭交付格式 + 反例 |
+
+(admin 壳工作流 skill 后续追加,装法相同。)
+
+**通用安装方法**(各客户端同理):
+
+1. **找客户端的 skills 目录** — 一般在家目录(或项目根目录)的点目录下找 `skills/`:
+
+   | 客户端 | skills 目录 |
+   |---|---|
+   | Claude Code / Claude Desktop | `~/.claude/skills/`(或项目级 `.claude/skills/`) |
+   | OpenClaw | `~/.openclaw/skills/` |
+   | Codex | `$CODEX_HOME/skills/`(默认 `~/.codex/skills/`) |
+   | Hermes | `~/.hermes/skills/` |
+   | 其他 | 在它的根/配置目录里找 `skills/`,没有就查该客户端文档 |
+
+2. **整个 skill 文件夹拷过去**(保持目录名 = skill 名):
+
+   ```bash
+   cp -r /path/to/vps_server/skills/get-available-proxy-nodes ~/.openclaw/skills/
+   ```
+
+3. **注册进 runtime**:多数客户端自动扫描 skills 目录,重启客户端或新开会话即生效;
+   需要显式注册的客户端,按其文档把 skill 加进 runtime 配置。
+
+4. **验证**:新开会话问 agent「你有哪些 skill」,确认列表里出现
+   `get-available-proxy-nodes`。
+
+**模型主动汇报义务**:连接本 MCP 的 agent 在首次会话或用户问「你能干嘛」时,
+应主动汇报已装的配套 skill(名字 + 一句话用途),让用户知道有现成玩法,
+不用自己摸工具列表。
+
 ---
 
 ## 6. 端口配置 + 改端口怎么办
@@ -633,6 +673,7 @@ sqlite3 db/vps_server.db "SELECT id, ip_id, status, last_error_code FROM ip_task
 | 已完工的任务回顾 | `task/done_*.md` |
 | 还没拍板的痛点 | `issue/YYYY-MM-DD-*.md` |
 | 系统启动配置 | `deploy/`(systemd unit / launchd plist / NSSM 脚本) |
+| 教 agent 用 MCP 工具的配套 skill | `skills/`(装法见 §5.3) |
 
 ### 8.2 设计原则(简版)
 
