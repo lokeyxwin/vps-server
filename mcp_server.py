@@ -46,8 +46,12 @@ server = Server(
     "vps-proxy-user",
     version="0.1.0",
     instructions=(
-        "Read-only MCP server for querying available proxy nodes. "
-        "Use the exposed tools to fetch current node data before answering users."
+        "MCP server for VPS asset management and proxy egress automation. "
+        "Tools cover three groups: registering a VPS or an upstream proxy IP "
+        "(write: enqueues a background task and returns immediately), "
+        "querying registration progress and available proxy nodes (read-only), "
+        "and ops bootstrap init_db / init_probe_vps (admin). "
+        "After a write call, follow up with the matching status query tool."
     ),
 )
 

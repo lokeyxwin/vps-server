@@ -140,6 +140,10 @@ uv sync          # 自动建 .venv + 装依赖
 
 ### 3.3 配 `.env`(敏感)
 
+> **必填速查**:`ENCRYPTION_KEY`(缺了不报启动错,第一次登记 VPS 存密码时才炸)
+> + `PROBE_VPS_1_IP / PROBE_VPS_1_PWD`(缺了 `register_ip` 直接返 `probe_vps_unreachable`)。
+> 选填:`MYSQL_PASSWORD`(SQLite 不用)/ `IPINFO_TOKEN`(不填走匿名小额度)。
+
 ```bash
 cp .env.example .env
 chmod 600 .env             # macOS / Linux: 别让别人偷看
