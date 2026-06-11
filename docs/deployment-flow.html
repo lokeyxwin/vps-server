@@ -1,0 +1,1129 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>vps-server 部署流程</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --ink: #172033;
+      --muted: #5e697d;
+      --soft: #e7ebf2;
+      --line: #d3dae6;
+      --blue: #2557a7;
+      --green: #1f7a55;
+      --amber: #9a5b05;
+      --red: #a33a3a;
+      --code-bg: #101828;
+      --code-ink: #e7edf7;
+      --shadow: 0 14px 36px rgba(31, 42, 68, 0.09);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.62;
+    }
+
+    button,
+    input,
+    textarea {
+      font: inherit;
+    }
+
+    .page {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 28px 20px 56px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr);
+      gap: 22px;
+      align-items: stretch;
+      margin-bottom: 20px;
+    }
+
+    .hero-main,
+    .status-board,
+    .tabs-wrap,
+    .common-flow {
+      background: var(--panel);
+      border: 1px solid var(--soft);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    .hero-main {
+      padding: 26px;
+      overflow: hidden;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--blue);
+      font-size: 13px;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+
+    h1 {
+      margin: 0;
+      max-width: 760px;
+      font-size: 34px;
+      line-height: 1.16;
+      font-weight: 800;
+    }
+
+    .lead {
+      max-width: 780px;
+      margin: 14px 0 0;
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    .status-board {
+      padding: 18px;
+    }
+
+    .status-title {
+      margin: 0 0 12px;
+      font-size: 14px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .status-list {
+      display: grid;
+      gap: 10px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .status-item {
+      display: grid;
+      grid-template-columns: 36px minmax(0, 1fr);
+      gap: 10px;
+      align-items: center;
+      padding: 10px;
+      border: 1px solid var(--soft);
+      border-radius: 8px;
+      background: #fbfcfe;
+    }
+
+    .status-icon,
+    .step-index,
+    .tab-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: none;
+    }
+
+    .status-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      color: var(--blue);
+      background: #eef4ff;
+    }
+
+    .status-item strong {
+      display: block;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .status-item span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+      margin-top: 2px;
+    }
+
+    .common-flow {
+      padding: 16px 18px;
+      margin: 0 0 18px;
+    }
+
+    .common-flow h2 {
+      margin: 0 0 12px;
+      font-size: 16px;
+    }
+
+    .rail {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(130px, 1fr));
+      gap: 10px;
+    }
+
+    .rail-item {
+      min-height: 86px;
+      padding: 12px;
+      border: 1px solid var(--soft);
+      border-radius: 8px;
+      background: #fbfcfe;
+    }
+
+    .rail-item b {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 4px;
+    }
+
+    .rail-item span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .tabs-wrap {
+      overflow: hidden;
+      min-width: 0;
+    }
+
+    .tabs {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(118px, 1fr));
+      gap: 0;
+      border-bottom: 1px solid var(--line);
+      background: #f8fafc;
+    }
+
+    .tab {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 62px;
+      padding: 10px 12px;
+      border: 0;
+      border-right: 1px solid var(--line);
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      text-align: center;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .tab:last-child {
+      border-right: 0;
+    }
+
+    .tab:hover {
+      background: #eef4ff;
+      color: var(--blue);
+    }
+
+    .tab[aria-selected="true"] {
+      background: var(--panel);
+      color: var(--blue);
+      box-shadow: inset 0 -3px 0 var(--blue);
+    }
+
+    .tab-icon {
+      width: 24px;
+      height: 24px;
+    }
+
+    .tab-panel {
+      display: none;
+      padding: 24px;
+      min-width: 0;
+    }
+
+    .tab-panel.active {
+      display: block;
+    }
+
+    .panel-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      align-items: start;
+      margin-bottom: 18px;
+    }
+
+    .panel-head h2 {
+      margin: 0 0 8px;
+      font-size: 24px;
+      line-height: 1.25;
+    }
+
+    .panel-head p {
+      margin: 0;
+      color: var(--muted);
+      max-width: 780px;
+    }
+
+    .badge-stack {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 5px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: #fbfcfe;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .badge.ok {
+      color: var(--green);
+      border-color: #b8dcc8;
+      background: #eef9f2;
+    }
+
+    .badge.warn {
+      color: var(--amber);
+      border-color: #e4c78b;
+      background: #fff7e5;
+    }
+
+    .flow {
+      position: relative;
+      display: grid;
+      gap: 14px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      min-width: 0;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 48px minmax(0, 1fr);
+      gap: 14px;
+      padding: 16px;
+      border: 1px solid var(--soft);
+      border-radius: 8px;
+      background: #fbfcfe;
+    }
+
+    .step-index {
+      width: 38px;
+      height: 38px;
+      border-radius: 8px;
+      background: #e8f0ff;
+      color: var(--blue);
+      font-weight: 800;
+    }
+
+    .step h3 {
+      margin: 0 0 6px;
+      font-size: 17px;
+      line-height: 1.35;
+    }
+
+    .step > div,
+    .panel-head > div,
+    .mini-card {
+      min-width: 0;
+    }
+
+    .step p {
+      margin: 0 0 10px;
+      color: var(--muted);
+    }
+
+    .note {
+      margin: 10px 0 0;
+      padding: 10px 12px;
+      border-left: 4px solid var(--amber);
+      background: #fff7e5;
+      color: #6f4405;
+      border-radius: 0 8px 8px 0;
+      font-size: 13px;
+    }
+
+    .note.safe {
+      border-left-color: var(--green);
+      background: #eef9f2;
+      color: #14583d;
+    }
+
+    .note.danger {
+      border-left-color: var(--red);
+      background: #fff1f1;
+      color: #7d2727;
+    }
+
+    .code-block {
+      position: relative;
+      margin: 10px 0 0;
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--code-bg);
+      border: 1px solid #1f2937;
+    }
+
+    .code-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-height: 34px;
+      padding: 7px 10px;
+      background: #182235;
+      color: #b9c4d8;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .copy-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 28px;
+      padding: 4px 8px;
+      border: 1px solid #344054;
+      border-radius: 6px;
+      background: #101828;
+      color: #d6deea;
+      cursor: pointer;
+      font-size: 12px;
+      line-height: 1;
+    }
+
+    .copy-btn:hover {
+      border-color: #6ea8ff;
+      color: #ffffff;
+    }
+
+    pre {
+      margin: 0;
+      padding: 14px;
+      overflow-x: auto;
+      color: var(--code-ink);
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+
+    .inline-code {
+      padding: 1px 5px;
+      border-radius: 5px;
+      background: #eef2f7;
+      color: #26354d;
+      font-size: 0.92em;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 10px;
+    }
+
+    .mini-card {
+      min-height: 110px;
+      padding: 12px;
+      border: 1px solid var(--soft);
+      border-radius: 8px;
+      background: #ffffff;
+    }
+
+    .mini-card h4 {
+      margin: 0 0 6px;
+      font-size: 14px;
+    }
+
+    .mini-card p {
+      margin: 0;
+      font-size: 13px;
+    }
+
+    .footer-note {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+    }
+
+    svg {
+      width: 1em;
+      height: 1em;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    @media (max-width: 980px) {
+      .hero {
+        grid-template-columns: 1fr;
+      }
+
+      .tabs {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .tab:nth-child(2n) {
+        border-right: 0;
+      }
+
+      .rail {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 680px) {
+      .page {
+        padding: 16px 12px 36px;
+      }
+
+      .hero-main,
+      .status-board,
+      .tab-panel {
+        padding: 16px;
+      }
+
+      h1 {
+        font-size: 27px;
+      }
+
+      .tabs {
+        grid-template-columns: 1fr;
+      }
+
+      .tab {
+        justify-content: flex-start;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .panel-head,
+      .step,
+      .two-col,
+      .rail {
+        grid-template-columns: 1fr;
+      }
+
+      .badge-stack {
+        justify-content: flex-start;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero" aria-labelledby="page-title">
+      <div class="hero-main">
+        <div class="eyebrow">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5h16"></path><path d="M4 12h16"></path><path d="M4 19h16"></path></svg>
+          README / deploy / ADR 汇总
+        </div>
+        <h1 id="page-title">vps-server 部署流程图</h1>
+        <p class="lead">
+          按客户端快速拉起、首次初始化、不同操作系统守护拉起三段拆开。顶部从左到右选择一种方式，下面按部署步骤从上到下执行。
+        </p>
+      </div>
+
+      <aside class="status-board" aria-label="部署心智模型">
+        <p class="status-title">两进程心智模型</p>
+        <ul class="status-list">
+          <li class="status-item">
+            <span class="status-icon"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 6h16"></path><path d="M4 12h10"></path><path d="M4 18h7"></path></svg></span>
+            <span><strong>mcp_server.py</strong><span>前台收单，由客户端 stdio 拉起，或由 HTTP 服务监听端口。</span></span>
+          </li>
+          <li class="status-item">
+            <span class="status-icon"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v18"></path><path d="M5 12h14"></path><path d="M19 12l-4-4"></path><path d="M19 12l-4 4"></path></svg></span>
+            <span><strong>main.py worker-loop</strong><span>后台常驻，消费 task 表并调度 XrayWorker / ProxyDeployWorker。</span></span>
+          </li>
+          <li class="status-item">
+            <span class="status-icon"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7c0-2 16-2 16 0v10c0 2-16 2-16 0Z"></path><path d="M4 12c0 2 16 2 16 0"></path></svg></span>
+            <span><strong>init-db / init-probe-vps</strong><span>首次部署必跑，后续 schema 变化或测试机异常时重跑。</span></span>
+          </li>
+        </ul>
+      </aside>
+    </section>
+
+    <section class="common-flow" aria-labelledby="global-sequence-title">
+      <h2 id="global-sequence-title">推荐总顺序</h2>
+      <div class="rail">
+        <div class="rail-item"><b>1. 准备项目</b><span>Python 3.10+、uv、git、拉仓库、<code>.env</code> 和加密密钥。</span></div>
+        <div class="rail-item"><b>2. 选客户端</b><span>OpenClaw+GPT 走 HTTP 目标形态；Claude Desktop / Claude Code 走 stdio。</span></div>
+        <div class="rail-item"><b>3. 初始化 DB</b><span>建 ORM 表，看到 <code>init-db 完成</code> 才继续。</span></div>
+        <div class="rail-item"><b>4. 初始化测试机</b><span>没有测试机时先在 <code>.env</code> 添加 PROBE_VPS，再跑自举。</span></div>
+        <div class="rail-item"><b>5. 守护 worker</b><span>Linux systemd、macOS launchd、Windows NSSM 三选一。</span></div>
+      </div>
+    </section>
+
+    <section class="tabs-wrap">
+      <div class="tabs" role="tablist" aria-label="部署方法标签">
+        <button class="tab" id="tab-openclaw" role="tab" type="button" aria-controls="panel-openclaw" aria-selected="true" data-tab="openclaw">
+          <span class="tab-icon"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 5h18v14H3z"></path><path d="M8 21h8"></path><path d="M12 17v4"></path></svg></span>
+          OpenClaw + GPT
+        </button>
+        <button class="tab" id="tab-stdio" role="tab" type="button" aria-controls="panel-stdio" aria-selected="false" data-tab="stdio">
+          <span class="tab-icon"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16"></path><path d="M7 12h10"></path><path d="M10 17h4"></path></svg></span>
+          Claude stdio
+        </button>
+        <button class="tab" id="tab-db" role="tab" type="button" aria-controls="panel-db" aria-selected="false" data-tab="db">
+          <span class="tab-icon"><svg aria-hidden="true" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"></ellipse><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"></path><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"></path></svg></span>
+          初始化 DB
+        </button>
+        <button class="tab" id="tab-probe" role="tab" type="button" aria-controls="panel-probe" aria-selected="false" data-tab="probe">
+          <span class="tab-icon"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 2v5"></path><path d="M12 17v5"></path><path d="M4.9 4.9l3.5 3.5"></path><path d="M15.6 15.6l3.5 3.5"></path><circle cx="12" cy="12" r="4"></circle></svg></span>
+          初始化测试机
+        </button>
+        <button class="tab" id="tab-linux" role="tab" type="button" aria-controls="panel-linux" aria-selected="false" data-tab="linux">
+          <span class="tab-icon"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4h14v16H5z"></path><path d="M9 8h6"></path><path d="M9 12h6"></path><path d="M9 16h3"></path></svg></span>
+          Linux
+        </button>
+        <button class="tab" id="tab-macos" role="tab" type="button" aria-controls="panel-macos" aria-selected="false" data-tab="macos">
+          <span class="tab-icon"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3c-1 2-3 3-5 3 0 8 5 13 5 13s5-5 5-13c-2 0-4-1-5-3Z"></path></svg></span>
+          macOS
+        </button>
+        <button class="tab" id="tab-windows" role="tab" type="button" aria-controls="panel-windows" aria-selected="false" data-tab="windows">
+          <span class="tab-icon"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 5l8-1v8H3z"></path><path d="M13 4l8-1v9h-8z"></path><path d="M3 14h8v7l-8-1z"></path><path d="M13 14h8v8l-8-1z"></path></svg></span>
+          Windows
+        </button>
+      </div>
+
+      <section class="tab-panel active" id="panel-openclaw" role="tabpanel" tabindex="0" aria-labelledby="tab-openclaw">
+        <div class="panel-head">
+          <div>
+            <h2>OpenClaw + GPT 认证登录部署方式</h2>
+            <p>OpenClaw 走 <code class="inline-code">/sse</code>，Codex / GPT auth 走 <code class="inline-code">/mcp</code>。两边配置互不继承，所以 admin 和 user 两个壳要各注册一次。</p>
+          </div>
+          <div class="badge-stack">
+            <span class="badge warn">HTTP transport 完成后使用</span>
+            <span class="badge">admin 47180</span>
+            <span class="badge">user 47181</span>
+          </div>
+        </div>
+
+        <ol class="flow">
+          <li class="step">
+            <span class="step-index">1</span>
+            <div>
+              <h3>先确认 HTTP MCP 入口已经落地</h3>
+              <p>README 标注当前 <code class="inline-code">mcp_server.py</code> 还是 stdio 实现。OpenClaw + Codex 的 HTTP 方式需要后续支持 <code class="inline-code">--http</code>、<code class="inline-code">/sse</code> 和 <code class="inline-code">/mcp</code>。</p>
+              <div class="note danger">如果当前代码还没做 HTTP transport，不要直接按这个标签生产部署；先用 Claude stdio，或先完成 HTTP 改造。</div>
+            </div>
+          </li>
+          <li class="step">
+            <span class="step-index">2</span>
+            <div>
+              <h3>守护 3 个进程</h3>
+              <p>HTTP 客户端只连端口，不会替你拉子进程。需要常驻 <code class="inline-code">worker-loop</code>、admin MCP、user MCP。</p>
+              <div class="code-block">
+                <div class="code-title"><span>目标进程</span><button class="copy-btn" type="button">复制</button></div>
+                <pre><code>PYTHONPATH=. uv run python main.py worker-loop
+PYTHONPATH=. uv run python mcp_server.py --role admin --http
+PYTHONPATH=. uv run python mcp_server.py --role user --http</code></pre>
+              </div>
+            </div>
+          </li>
+          <li class="step">
+            <span class="step-index">3</span>
+            <div>
+              <h3>OpenClaw 注册 SSE 端点</h3>
+              <p>写入 <code class="inline-code">~/.openclaw/openclaw.json</code>，OpenClaw 只认自己的 <code class="inline-code">mcp.servers</code>。</p>
+              <div class="code-block">
+                <div class="code-title"><span>~/.openclaw/openclaw.json</span><button class="copy-btn" type="button">复制</button></div>
+                <pre><code>{
+  "mcp": {
+    "servers": {
+      "vps_admin": { "url": "http://127.0.0.1:47180/sse", "transport": "sse" },
+      "vps_user":  { "url": "http://127.0.0.1:47181/sse", "transport": "sse" }
+    }
+  }
+}</code></pre>
+              </div>
+            </div>
+          </li>
+          <li class="step">
+            <span class="step-index">4</span>
+            <div>
+              <h3>Codex / GPT auth 注册 MCP 端点</h3>
+              <p>写入 <code class="inline-code">~/.codex/config.toml</code>。不要把 Codex 写成 <code class="inline-code">/sse</code>，也不要把 admin / user 端口写反。</p>
+              <div class="code-block">
+                <div class="code-title"><span>~/.codex/config.toml</span><button class="copy-btn" type="button">复制</button></div>
+                <pre><code>[mcp_servers.vps_admin]
+url = "http://127.0.0.1:47180/mcp"
+startup_timeout_sec = 120
+
+[mcp_servers.vps_user]
+url = "http://127.0.0.1:47181/mcp"
+startup_timeout_sec = 120</code></pre>
+              </div>
+            </div>
+          </li>
+          <li class="step">
+            <span class="step-index">5</span>
+            <div>
+              <h3>重启客户端并验证工具可见</h3>
+              <p>重启 OpenClaw 和 Codex。admin 侧应能看到 <code class="inline-code">register_vps</code>、<code class="inline-code">register_ip</code>、<code class="inline-code">init_db</code>、<code class="inline-code">init_probe_vps</code>；user 侧只暴露查询工具。</p>
+              <div class="note safe">生产部署时 MCP 监听地址必须绑 <code class="inline-code">127.0.0.1</code>，不要把 admin 端点暴露到公网。</div>
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <section class="tab-panel" id="panel-stdio" role="tabpanel" tabindex="0" aria-labelledby="tab-stdio">
+        <div class="panel-head">
+          <div>
+            <h2>Claude Desktop / Claude Code 的 stdio 部署方式</h2>
+            <p>stdio 客户端会按配置自己 fork 子进程，所以 <code class="inline-code">mcp_server.py</code> 不进 systemd / launchd / NSSM；只需要单独守护 <code class="inline-code">main.py worker-loop</code>。</p>
+          </div>
+          <div class="badge-stack">
+            <span class="badge ok">当前代码可用</span>
+            <span class="badge">客户端拉 MCP</span>
+            <span class="badge">只守护 worker</span>
+          </div>
+        </div>
+
+        <ol class="flow">
+          <li class="step">
+            <span class="step-index">1</span>
+            <div>
+              <h3>准备项目路径和虚拟环境</h3>
+              <p>安装 uv、拉仓库、同步依赖，并确认 <code class="inline-code">.venv/bin/python</code> 或 Windows 的 <code class="inline-code">.venv\\Scripts\\python.exe</code> 存在。</p>
+              <div class="code-block">
+                <div class="code-title"><span>macOS / Linux</span><button class="copy-btn" type="button">复制</button></div>
+                <pre><code>curl -LsSf https://astral.sh/uv/install.sh | sh
+git clone &lt;仓库地址&gt; vps_server
+cd vps_server
+uv sync</code></pre>
+              </div>
+            </div>
+          </li>
+          <li class="step">
+            <span class="step-index">2</span>
+            <div>
+              <h3>写 Claude MCP 配置</h3>
+              <p>Claude Desktop 配置文件通常在 <code class="inline-code">~/Library/Application Support/Claude/claude_desktop_config.json</code>。Claude Code 使用同样的 stdio 思路。</p>
+              <div class="code-block">
+                <div class="code-title"><span>stdio config</span><button class="copy-btn" type="button">复制</button></div>
+                <pre><code>{
+  "mcpServers": {
+    "vps_admin": {
+      "command": "/path/to/vps_server/.venv/bin/python",
+      "args": ["mcp_server.py", "--role", "admin"],
+      "cwd": "/path/to/vps_server",
+      "env": { "PYTHONPATH": "/path/to/vps_server" }
+    },
+    "vps_user": {
+      "command": "/path/to/vps_server/.venv/bin/python",
+      "args": ["mcp_server.py", "--role", "user"],
+      "cwd": "/path/to/vps_server",
+      "env": { "PYTHONPATH": "/path/to/vps_server" }
+    }
+  }
+}</code></pre>
+              </div>
+            </div>
+          </li>
+          <li class="step">
+            <span class="step-index">3</span>
+            <div>
+              <h3>不要守护 stdio MCP server</h3>
+              <p>Claude 启动时拉起 <code class="inline-code">mcp_server.py</code>，Claude 关闭时回收。把 stdio MCP server 放进守护管理器会抢同一条 stdio 通道。</p>
+              <div class="note">只守护 <code class="inline-code">main.py worker-loop</code>。否则 <code class="inline-code">register_vps</code> / <code class="inline-code">register_ip</code> 返回 queued 后，没有后台 worker 消费任务。</div>
+            </div>
+          </li>
+          <li class="step">
+            <span class="step-index">4</span>
+            <div>
+              <h3>重启 Claude 并验证工具</h3>
+              <p>重启客户端后，admin 侧应看到登记和初始化工具，user 侧应看到查询工具。首次部署继续执行“初始化 DB”和“初始化测试机”两个标签。</p>
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <section class="tab-panel" id="panel-db" role="tabpanel" tabindex="0" aria-labelledby="tab-db">
+        <div class="panel-head">
+          <div>
+            <h2>初始化数据库</h2>
+            <p>首次部署必跑。它只负责建表，已有表不会被覆盖；新增 ORM 表后也需要重跑。</p>
+          </div>
+          <div class="badge-stack">
+            <span class="badge ok">幂等</span>
+            <span class="badge">CLI 或 admin MCP</span>
+          </div>
+        </div>
+
+        <ol class="flow">
+          <li class="step">
+            <span class="step-index">1</span>
+            <div>
+              <h3>准备 .env 和加密密钥</h3>
+              <p><code class="inline-code">ENCRYPTION_KEY</code> 是生产命脉，同一个 DB 换机器部署必须复用同一把 key。</p>
+              <div class="code-block">
+                <div class="code-title"><span>.env 初始化</span><button class="copy-btn" type="button">复制</button></div>
+                <pre><code>cp .env.example .env
+chmod 600 .env
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"</code></pre>
+              </div>
+            </div>
+          </li>
+          <li class="step">
+            <span class="step-index">2</span>
+            <div>
+              <h3>先跑测试确认环境</h3>
+              <p>README 推荐先跑 mock 测试，确认 Python 依赖和导入路径正常。</p>
+              <div class="code-block">
+                <div class="code-title"><span>测试</span><button class="copy-btn" type="button">复制</button></div>
+                <pre><code>PYTHONPATH=. VPS_SERVER_TESTING=1 uv run pytest -q</code></pre>
+              </div>
+            </div>
+          </li>
+          <li class="step">
+            <span class="step-index">3</span>
+            <div>
+              <h3>执行 init-db</h3>
+              <p>看到 <code class="inline-code">init-db 完成: N 张表已就绪</code> 就算成功。</p>
+              <div class="code-block">
+                <div class="code-title"><span>CLI</span><button class="copy-btn" type="button">复制</button></div>
+                <pre><code>PYTHONPATH=. uv run python main.py init-db</code></pre>
+              </div>
+              <div class="note safe">如果已经配置好 admin MCP，也可以让 agent 调 <code class="inline-code">init_db</code> 工具。</div>
+            </div>
+          </li>
+          <li class="step">
+            <span class="step-index">4</span>
+            <div>
+              <h3>出错时按错误类型处理</h3>
+              <p><code class="inline-code">no such table</code> 基本就是漏跑 init-db；SQLite dev schema 改坏时按 README 的说明手动处理，生产 MySQL 则按迁移策略处理。</p>
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <section class="tab-panel" id="panel-probe" role="tabpanel" tabindex="0" aria-labelledby="tab-probe">
+        <div class="panel-head">
+          <div>
+            <h2>初始化测试机</h2>
+            <p>测试机给 IPProbeWorker 校验上游 IP 用，不进业务 VPS 表。没有测试机时先添加 <code class="inline-code">PROBE_VPS_1_*</code> 到 <code class="inline-code">.env</code>。</p>
+          </div>
+          <div class="badge-stack">
+            <span class="badge ok">幂等</span>
+            <span class="badge">默认 inbound 19000</span>
+            <span class="badge">admin only</span>
+          </div>
+        </div>
+
+        <ol class="flow">
+          <li class="step">
+            <span class="step-index">1</span>
+            <div>
+              <h3>添加测试 VPS 凭据</h3>
+              <p>最多可配 3 台。最小可用配置是 host、port、user、password。</p>
+              <div class="code-block">
+                <div class="code-title"><span>.env</span><button class="copy-btn" type="button">复制</button></div>
+                <pre><code>PROBE_VPS_1_IP=&lt;测试机公网 IP&gt;
+PROBE_VPS_1_PORT=22
+PROBE_VPS_1_USER=root
+PROBE_VPS_1_PWD=&lt;SSH 密码&gt;</code></pre>
+              </div>
+            </div>
+          </li>
+          <li class="step">
+            <span class="step-index">2</span>
+            <div>
+              <h3>执行测试机自举</h3>
+              <p>自举会 SSH 连接测试机，确认或安装 xray，启动服务，并确保 19000 socks5 noauth → freedom inbound 存在。</p>
+              <div class="code-block">
+                <div class="code-title"><span>CLI</span><button class="copy-btn" type="button">复制</button></div>
+                <pre><code>PYTHONPATH=. uv run python main.py init-probe-vps
+# 多台测试机时可选 slot
+PYTHONPATH=. uv run python main.py init-probe-vps --slot 2</code></pre>
+              </div>
+            </div>
+          </li>
+          <li class="step">
+            <span class="step-index">3</span>
+            <div>
+              <h3>确认完成日志</h3>
+              <p>看到 <code class="inline-code">init-probe-vps 完成: host=... inbound_port=19000</code> 才继续登记 IP。</p>
+              <div class="note safe">如果 agent 查询或登记时返回 <code class="inline-code">probe_vps_not_ready</code>，优先重跑这一页的命令。</div>
+            </div>
+          </li>
+          <li class="step">
+            <span class="step-index">4</span>
+            <div>
+              <h3>理解它不进 worker 体系</h3>
+              <p>测试机不是生产代理池资产，不写 <code class="inline-code">vps_record</code>、不派 <code class="inline-code">vps_task</code>，也不走 XrayWorker 的三分支纳管流程。</p>
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <section class="tab-panel" id="panel-linux" role="tabpanel" tabindex="0" aria-labelledby="tab-linux">
+        <div class="panel-head">
+          <div>
+            <h2>Linux 用 systemd 拉起常驻 worker</h2>
+            <p>生产推荐 Linux。仓库提供了 <code class="inline-code">deploy/vps-server-worker.service</code>，负责守护 <code class="inline-code">main.py worker-loop</code>。</p>
+          </div>
+          <div class="badge-stack">
+            <span class="badge ok">生产推荐</span>
+            <span class="badge">systemd</span>
+          </div>
+        </div>
+
+        <ol class="flow">
+          <li class="step">
+            <span class="step-index">1</span>
+            <div>
+              <h3>修改 service 里的 4 处占位</h3>
+              <p>按真实部署路径修改 <code class="inline-code">User</code>、<code class="inline-code">Group</code>、<code class="inline-code">WorkingDirectory</code>、<code class="inline-code">EnvironmentFile</code>。SQLite 场景还要确认 <code class="inline-code">ReadWritePaths</code> 可写。</p>
+            </div>
+          </li>
+          <li class="step">
+            <span class="step-index">2</span>
+            <div>
+              <h3>安装并启动 worker 服务</h3>
+              <div class="code-block">
+                <div class="code-title"><span>systemd</span><button class="copy-btn" type="button">复制</button></div>
+                <pre><code>sudo cp deploy/vps-server-worker.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now vps-server-worker</code></pre>
+              </div>
+            </div>
+          </li>
+          <li class="step">
+            <span class="step-index">3</span>
+            <div>
+              <h3>验证状态和日志</h3>
+              <div class="code-block">
+                <div class="code-title"><span>检查</span><button class="copy-btn" type="button">复制</button></div>
+                <pre><code>sudo systemctl status vps-server-worker
+sudo journalctl -u vps-server-worker -f</code></pre>
+              </div>
+              <div class="note safe">应看到 <code class="inline-code">main.worker-loop 启动</code>，没任务时会静默轮询。</div>
+            </div>
+          </li>
+          <li class="step">
+            <span class="step-index">4</span>
+            <div>
+              <h3>HTTP 客户端额外守护 MCP admin / user</h3>
+              <p>只用 Claude stdio 时不需要这一步。OpenClaw + Codex HTTP 模式下，HTTP 改造完成后还要按同样思路新增 admin 47180 和 user 47181 两个 systemd unit。</p>
+              <div class="note">当前仓库只提供 worker 的 systemd 文件；MCP HTTP unit 需要在 HTTP transport 落地后补齐。</div>
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <section class="tab-panel" id="panel-macos" role="tabpanel" tabindex="0" aria-labelledby="tab-macos">
+        <div class="panel-head">
+          <div>
+            <h2>macOS 用 launchd 拉起常驻 worker</h2>
+            <p>适合开发机或个人测试。仓库提供 <code class="inline-code">deploy/com.vps-server.worker.plist</code>。</p>
+          </div>
+          <div class="badge-stack">
+            <span class="badge">launchd</span>
+            <span class="badge warn">不建议生产</span>
+          </div>
+        </div>
+
+        <ol class="flow">
+          <li class="step">
+            <span class="step-index">1</span>
+            <div>
+              <h3>修改 plist 路径占位</h3>
+              <p>把 <code class="inline-code">/Users/YOU/path/to/vps_server</code> 换成实际项目路径，同时修改 python 路径、<code class="inline-code">PYTHONPATH</code> 和日志路径。</p>
+            </div>
+          </li>
+          <li class="step">
+            <span class="step-index">2</span>
+            <div>
+              <h3>安装到用户级 LaunchAgents</h3>
+              <div class="code-block">
+                <div class="code-title"><span>launchd</span><button class="copy-btn" type="button">复制</button></div>
+                <pre><code>cp deploy/com.vps-server.worker.plist ~/Library/LaunchAgents/
+launchctl load -w ~/Library/LaunchAgents/com.vps-server.worker.plist</code></pre>
+              </div>
+            </div>
+          </li>
+          <li class="step">
+            <span class="step-index">3</span>
+            <div>
+              <h3>验证运行状态</h3>
+              <div class="code-block">
+                <div class="code-title"><span>检查</span><button class="copy-btn" type="button">复制</button></div>
+                <pre><code>launchctl list | grep vps-server
+tail -f /tmp/vps-server-worker.log</code></pre>
+              </div>
+            </div>
+          </li>
+          <li class="step">
+            <span class="step-index">4</span>
+            <div>
+              <h3>停止和取消注册</h3>
+              <div class="code-block">
+                <div class="code-title"><span>卸载</span><button class="copy-btn" type="button">复制</button></div>
+                <pre><code>launchctl unload -w ~/Library/LaunchAgents/com.vps-server.worker.plist</code></pre>
+              </div>
+              <div class="note">macOS 盖电脑会挂起进程，开发可用，生产优先放 Linux。</div>
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <section class="tab-panel" id="panel-windows" role="tabpanel" tabindex="0" aria-labelledby="tab-windows">
+        <div class="panel-head">
+          <div>
+            <h2>Windows 用 NSSM 拉起常驻 worker</h2>
+            <p>NSSM 把 Python 命令包成 Windows 服务，仓库的详细说明在 <code class="inline-code">deploy/install-windows-nssm.md</code>。</p>
+          </div>
+          <div class="badge-stack">
+            <span class="badge">NSSM</span>
+            <span class="badge">SERVICE_AUTO_START</span>
+          </div>
+        </div>
+
+        <ol class="flow">
+          <li class="step">
+            <span class="step-index">1</span>
+            <div>
+              <h3>安装 NSSM</h3>
+              <div class="code-block">
+                <div class="code-title"><span>PowerShell</span><button class="copy-btn" type="button">复制</button></div>
+                <pre><code>choco install nssm
+# 或下载 https://nssm.cc/download 并把 win64 目录加入 PATH</code></pre>
+              </div>
+            </div>
+          </li>
+          <li class="step">
+            <span class="step-index">2</span>
+            <div>
+              <h3>注册 worker 服务</h3>
+              <div class="code-block">
+                <div class="code-title"><span>PowerShell</span><button class="copy-btn" type="button">复制</button></div>
+                <pre><code>$ProjectRoot = "C:\Path\To\vps_server"
+$PythonExe   = "$ProjectRoot\.venv\Scripts\python.exe"
+
+nssm install vps-server-worker $PythonExe "main.py worker-loop"
+nssm set vps-server-worker AppDirectory        $ProjectRoot
+nssm set vps-server-worker AppEnvironmentExtra "PYTHONPATH=$ProjectRoot"
+nssm set vps-server-worker AppStdout           "$ProjectRoot\logs\worker.log"
+nssm set vps-server-worker AppStderr           "$ProjectRoot\logs\worker.err"
+nssm set vps-server-worker Start               SERVICE_AUTO_START
+nssm set vps-server-worker AppExit Default     Restart
+nssm set vps-server-worker AppRestartDelay     5000</code></pre>
+              </div>
+            </div>
+          </li>
+          <li class="step">
+            <span class="step-index">3</span>
+            <div>
+              <h3>启动并查看日志</h3>
+              <div class="code-block">
+                <div class="code-title"><span>PowerShell</span><button class="copy-btn" type="button">复制</button></div>
+                <pre><code>nssm start vps-server-worker
+nssm status vps-server-worker
+Get-Content "$ProjectRoot\logs\worker.log" -Tail 50 -Wait</code></pre>
+              </div>
+            </div>
+          </li>
+          <li class="step">
+            <span class="step-index">4</span>
+            <div>
+              <h3>HTTP 客户端额外注册 MCP 服务</h3>
+              <p>只用 Claude stdio 时不需要。OpenClaw + Codex HTTP 模式下，HTTP 改造完成后按 <code class="inline-code">deploy/install-windows-nssm.md</code> 第 2 节注册 <code class="inline-code">vps-server-mcp-admin</code> 和 <code class="inline-code">vps-server-mcp-user</code>。</p>
+              <div class="note safe">NSSM 停服务时会先模拟 Ctrl+C，和 <code class="inline-code">main.py</code> 的 SIGINT handler 对齐。</div>
+            </div>
+          </li>
+        </ol>
+      </section>
+    </section>
+
+    <p class="footer-note">
+      内容来源：README.md、deploy/、ADR-0007、ADR-0008、ADR-0009。端口默认值：admin 47180，user 47181，测试机 inbound 19000。
+    </p>
+  </main>
+
+  <script>
+    const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+    const panels = Array.from(document.querySelectorAll('[role="tabpanel"]'));
+
+    function activateTab(tab, updateHash = true) {
+      const id = tab.dataset.tab;
+      tabs.forEach((item) => {
+        item.setAttribute('aria-selected', String(item === tab));
+      });
+      panels.forEach((panel) => {
+        panel.classList.toggle('active', panel.id === `panel-${id}`);
+      });
+      if (updateHash) {
+        history.replaceState(null, '', `#${id}`);
+      }
+    }
+
+    tabs.forEach((tab) => {
+      tab.addEventListener('click', () => activateTab(tab));
+      tab.addEventListener('keydown', (event) => {
+        const index = tabs.indexOf(tab);
+        let next = index;
+        if (event.key === 'ArrowRight') next = (index + 1) % tabs.length;
+        if (event.key === 'ArrowLeft') next = (index - 1 + tabs.length) % tabs.length;
+        if (next !== index) {
+          event.preventDefault();
+          tabs[next].focus();
+          activateTab(tabs[next]);
+        }
+      });
+    });
+
+    document.querySelectorAll('.copy-btn').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const block = button.closest('.code-block');
+        const code = block ? block.querySelector('code') : null;
+        if (!code) return;
+        try {
+          await navigator.clipboard.writeText(code.innerText);
+          const oldText = button.textContent;
+          button.textContent = '已复制';
+          setTimeout(() => {
+            button.textContent = oldText;
+          }, 1200);
+        } catch {
+          button.textContent = '复制失败';
+          setTimeout(() => {
+            button.textContent = '复制';
+          }, 1200);
+        }
+      });
+    });
+
+    const initial = location.hash.replace('#', '');
+    const initialTab = tabs.find((tab) => tab.dataset.tab === initial);
+    if (initialTab) {
+      activateTab(initialTab, false);
+    }
+  </script>
+</body>
+</html>
