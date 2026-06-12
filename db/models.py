@@ -72,7 +72,8 @@ class VPSRecord(Base):
         String(32), default=VPSStage.CONNECTABLE, nullable=False
     )
     # xray_version：SSHWorker 永远不写（留空字符串），XrayWorker 第一次干完写
-    xray_version: Mapped[str] = mapped_column(String(32), default="", nullable=False)
+    # 存 `xray version` 首行整行 banner（含 "Xray x.y.z (Xray, Penetrates Everything.) ..."），约 70+ 字符
+    xray_version: Mapped[str] = mapped_column(String(255), default="", nullable=False)
     xray_installed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     xray_last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
