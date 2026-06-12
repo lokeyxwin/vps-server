@@ -229,7 +229,7 @@ class XrayWorker:
 
     def _claim_task(self) -> int | None:
         """从 vps_task 抢一条 PENDING. 原子 UPDATE 防多 worker 并发抢到同一条."""
-        now = datetime.utcnow()
+        now = datetime.now()
         with session_scope() as s:
             candidate = (
                 s.query(VPSTask)
@@ -445,7 +445,7 @@ class XrayWorker:
 
     @staticmethod
     def _mark_done(task_id: int, vps_id: int, tail_result: dict) -> None:
-        now = datetime.utcnow()
+        now = datetime.now()
         with session_scope() as s:
             task = s.get(VPSTask, task_id)
             if task is not None:
@@ -480,7 +480,7 @@ class XrayWorker:
     @staticmethod
     def _handle_retriable(task_id: int, error_code: str, error_msg: str) -> None:
         """可重试失败: retry_count < 5 → 回 PENDING + 退避; >= 5 → FAILED."""
-        now = datetime.utcnow()
+        now = datetime.now()
         with session_scope() as s:
             task = s.get(VPSTask, task_id)
             if task is None:

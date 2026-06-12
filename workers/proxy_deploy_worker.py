@@ -226,7 +226,7 @@ class ProxyDeployWorker:
 
     def _claim_task(self) -> int | None:
         """从 ip_task 抢一条 PENDING. 原子 UPDATE 防多 worker 并发抢到同一条."""
-        now = datetime.utcnow()
+        now = datetime.now()
         with session_scope() as s:
             candidate = (
                 s.query(IPTask)
@@ -528,7 +528,7 @@ class ProxyDeployWorker:
         - vps: used_port_count +1, stage='running' → 'connectable' (释放资源锁)
         - ip_task: in_progress → done
         """
-        now = datetime.utcnow()
+        now = datetime.now()
         with session_scope() as s:
             proxy = ProxyRecord.from_new_deployment(
                 vps_id=vps_id,
@@ -593,7 +593,7 @@ class ProxyDeployWorker:
         spec §7: 只有 ssh_disconnected 走此路径, 结构性容量问题(no_*)直接 mark_failed.
         失败时 vps.stage 保持 running 不释放(交给维修工人, ADR-0005 §3).
         """
-        now = datetime.utcnow()
+        now = datetime.now()
         with session_scope() as s:
             task = s.get(IPTask, task_id)
             if task is None:

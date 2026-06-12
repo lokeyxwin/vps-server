@@ -93,7 +93,7 @@ class TestFailureRetry(unittest.TestCase):
 
     def test_tc12a_first_retry_pending_backoff_2min(self):
         task_id = self._make_task(retry_count=0)
-        before = datetime.utcnow()
+        before = datetime.now()
         XrayWorker._handle_retriable(task_id, "install_failed", "boom")
         with self.Session() as s:
             t = s.get(VPSTask, task_id)
@@ -106,7 +106,7 @@ class TestFailureRetry(unittest.TestCase):
 
     def test_tc12b_retry_count_2_backoff_8min(self):
         task_id = self._make_task(retry_count=2)
-        before = datetime.utcnow()
+        before = datetime.now()
         XrayWorker._handle_retriable(task_id, "service_not_active", "msg")
         with self.Session() as s:
             t = s.get(VPSTask, task_id)
@@ -121,7 +121,7 @@ class TestFailureRetry(unittest.TestCase):
         # 这里测 retry_count=3 → next=4, 2^4=16; 然后再来一次 4 → 5, 2^5=32; 6 → 64 应 cap 60
         # 但 4 → 5 已熔断. 直接验证 cap 逻辑用 retry_count=10 模拟 (虽然实际不会到这步)
         task_id = self._make_task(retry_count=10)
-        before = datetime.utcnow()
+        before = datetime.now()
         XrayWorker._handle_retriable(task_id, "ssh_timeout", "msg")
         with self.Session() as s:
             t = s.get(VPSTask, task_id)
