@@ -86,6 +86,24 @@ def test_upload_config_plain_tee_when_root():
     assert cmd.startswith(f"tee {xc.DEFAULT_CONFIG_PATH} > /dev/null << ")
 
 
+# ============ validate_config 用 xray 绝对路径（sudo secure_path 不含 /usr/local/bin）============
+
+def test_validate_config_uses_absolute_xray_path_under_sudo():
+    with patch.object(xc, "execute_command", return_value=_ok()) as ex:
+        xc.validate_config(MagicMock(), use_sudo=True)
+    cmd = ex.call_args.args[1]
+    # 必须是 `sudo -n /usr/local/bin/xray ...`，不能是裸 `sudo -n xray`
+    assert cmd == f"sudo -n {xc.XRAY_BIN} -test -c {xc.DEFAULT_CONFIG_PATH}"
+    assert "sudo -n xray " not in cmd
+
+
+def test_validate_config_root_uses_absolute_path_too():
+    with patch.object(xc, "execute_command", return_value=_ok()) as ex:
+        xc.validate_config(MagicMock(), use_sudo=False)
+    cmd = ex.call_args.args[1]
+    assert cmd == f"{xc.XRAY_BIN} -test -c {xc.DEFAULT_CONFIG_PATH}"
+
+
 # ============ XrayManager.use_sudo 惰性探测 + 缓存 + 透传 ============
 
 def test_manager_use_sudo_true_for_non_root_and_cached():

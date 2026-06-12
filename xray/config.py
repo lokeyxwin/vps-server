@@ -62,6 +62,10 @@ _XRAY_PROTOCOL_NAME = {
 DEFAULT_CONFIG_PATH = "/usr/local/etc/xray/config.json"
 DEFAULT_PORT = config.XRAY_DEFAULT_PORT
 
+# xray 二进制绝对路径（XTLS 官方装机脚本固定装在这）。
+# sudo 的 secure_path 不含 /usr/local/bin，sudo 下必须用绝对路径才找得到 xray。
+XRAY_BIN = "/usr/local/bin/xray"
+
 
 # ============================================================
 # 错误文案
@@ -674,7 +678,7 @@ def validate_config(client: paramiko.SSHClient, use_sudo: bool = False) -> None:
     业务一般在 upload_config 后、reload 前调一次，避免推坏 config 上线。
     """
     result = execute_command(
-        client, f"{sudo_prefix(use_sudo)}xray -test -c {DEFAULT_CONFIG_PATH}"
+        client, f"{sudo_prefix(use_sudo)}{XRAY_BIN} -test -c {DEFAULT_CONFIG_PATH}"
     )
     if result["exit_code"] != 0:
         # xray 校验错误可能在 stdout 也可能在 stderr，两边都看
