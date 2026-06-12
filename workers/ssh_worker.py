@@ -9,8 +9,10 @@
 
 我会用到的工具:
   - ssh.session.VPSSession (SSH 通话手柄类,有状态)
-  - xray.manager.XrayManager.version (只这一个方法,看 xray 装没装)
   - db.models (VPSRecord / VPSTask 等)
+
+我不碰 xray: 不调 XrayManager / 不探 xray 版本, xray_version 永远写空,
+装没装由 XrayWorker 拿到任务后实时探 `xray version` 判定。
 
 我的私有编排方法(下划线开头):
   - _lookup_existing _probe_ssh _persist_and_dispatch _handle_failure

@@ -8,7 +8,7 @@ from __future__ import annotations
 import paramiko
 
 import config
-from ssh.ops import execute_command
+from ssh.ops import execute_command, sudo_prefix
 
 
 # ============================================================
@@ -135,6 +135,12 @@ class ReloadFailedError(XrayError):
 # 原子函数：查询类
 # ============================================================
 
+def is_root(client: paramiko.SSHClient) -> bool:
+    """登录用户是否 root（uid 0）。决定特权命令是否需要 sudo。"""
+    result = execute_command(client, "id -u")
+    return result["stdout"].strip() == "0"
+
+
 def is_installed(client: paramiko.SSHClient) -> bool:
     """检查 xray 二进制是否存在。"""
     result = execute_command(client, "command -v xray")
@@ -165,9 +171,11 @@ def version(client: paramiko.SSHClient) -> str:
 # 原子函数：操作类
 # ============================================================
 
-def install(client: paramiko.SSHClient) -> None:
+def install(client: paramiko.SSHClient, use_sudo: bool = False) -> None:
     """安装 xray。失败抛 InstallFailedError。"""
-    result = execute_command(client, INSTALL_COMMAND, timeout=INSTALL_TIMEOUT)
+    result = execute_command(
+        client, f"{sudo_prefix(use_sudo)}{INSTALL_COMMAND}", timeout=INSTALL_TIMEOUT
+    )
     if result["exit_code"] != 0:
         raise InstallFailedError(
             f"{XRAY_INSTALL_FAILED_MESSAGE}: exit={result['exit_code']} "
@@ -175,9 +183,11 @@ def install(client: paramiko.SSHClient) -> None:
         )
 
 
-def uninstall(client: paramiko.SSHClient) -> None:
+def uninstall(client: paramiko.SSHClient, use_sudo: bool = False) -> None:
     """卸载 xray。失败抛 UninstallFailedError。"""
-    result = execute_command(client, UNINSTALL_COMMAND, timeout=INSTALL_TIMEOUT)
+    result = execute_command(
+        client, f"{sudo_prefix(use_sudo)}{UNINSTALL_COMMAND}", timeout=INSTALL_TIMEOUT
+    )
     if result["exit_code"] != 0:
         raise UninstallFailedError(
             f"{XRAY_UNINSTALL_FAILED_MESSAGE}: exit={result['exit_code']} "
@@ -185,9 +195,9 @@ def uninstall(client: paramiko.SSHClient) -> None:
         )
 
 
-def start(client: paramiko.SSHClient) -> None:
+def start(client: paramiko.SSHClient, use_sudo: bool = False) -> None:
     """启动 xray systemd 服务。失败抛 ServiceNotActiveError。"""
-    result = execute_command(client, "systemctl start xray")
+    result = execute_command(client, f"{sudo_prefix(use_sudo)}systemctl start xray")
     if result["exit_code"] != 0:
         raise ServiceNotActiveError(
             f"{XRAY_SERVICE_START_FAILED_MESSAGE}: exit={result['exit_code']} "
@@ -195,9 +205,9 @@ def start(client: paramiko.SSHClient) -> None:
         )
 
 
-def enable(client: paramiko.SSHClient) -> None:
+def enable(client: paramiko.SSHClient, use_sudo: bool = False) -> None:
     """设置 xray 开机自启。失败抛 EnableFailedError。"""
-    result = execute_command(client, "systemctl enable xray")
+    result = execute_command(client, f"{sudo_prefix(use_sudo)}systemctl enable xray")
     if result["exit_code"] != 0:
         raise EnableFailedError(
             f"{XRAY_ENABLE_FAILED_MESSAGE}: exit={result['exit_code']} "
@@ -205,9 +215,9 @@ def enable(client: paramiko.SSHClient) -> None:
         )
 
 
-def stop(client: paramiko.SSHClient) -> None:
+def stop(client: paramiko.SSHClient, use_sudo: bool = False) -> None:
     """停止 xray systemd 服务。失败抛 StopFailedError。"""
-    result = execute_command(client, "systemctl stop xray")
+    result = execute_command(client, f"{sudo_prefix(use_sudo)}systemctl stop xray")
     if result["exit_code"] != 0:
         raise StopFailedError(
             f"{XRAY_SERVICE_STOP_FAILED_MESSAGE}: exit={result['exit_code']} "
@@ -215,9 +225,9 @@ def stop(client: paramiko.SSHClient) -> None:
         )
 
 
-def disable(client: paramiko.SSHClient) -> None:
+def disable(client: paramiko.SSHClient, use_sudo: bool = False) -> None:
     """关闭 xray 开机自启。失败抛 DisableFailedError。"""
-    result = execute_command(client, "systemctl disable xray")
+    result = execute_command(client, f"{sudo_prefix(use_sudo)}systemctl disable xray")
     if result["exit_code"] != 0:
         raise DisableFailedError(
             f"{XRAY_DISABLE_FAILED_MESSAGE}: exit={result['exit_code']} "
@@ -225,7 +235,7 @@ def disable(client: paramiko.SSHClient) -> None:
         )
 
 
-def reload(client: paramiko.SSHClient) -> None:
+def reload(client: paramiko.SSHClient, use_sudo: bool = False) -> None:
     """让 xray 重新加载 config。
 
     优先 `systemctl reload xray`（无打断，需要 unit 配 ExecReload=SIGHUP）；
@@ -237,7 +247,8 @@ def reload(client: paramiko.SSHClient) -> None:
     """
     # `|| restart` 兜底：reload 失败时返回非零 exit_code，
     # `||` 触发 restart；restart 成功后整条命令 exit=0
-    cmd = "systemctl reload xray 2>&1 || systemctl restart xray"
+    prefix = sudo_prefix(use_sudo)
+    cmd = f"{prefix}systemctl reload xray 2>&1 || {prefix}systemctl restart xray"
     result = execute_command(client, cmd)
     if result["exit_code"] != 0:
         raise ReloadFailedError(

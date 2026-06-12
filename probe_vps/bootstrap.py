@@ -261,7 +261,7 @@ def ensure_ready(entry: dict) -> ProbeVPSHandle:
 
         # ⑤ PROBE_TEST_PORT 没 socks5/freedom inbound → add + reload
         try:
-            cfg = xc.read_config(session.client)
+            cfg = xc.read_config(session.client, use_sudo=xm.use_sudo)
         except xc.ConfigReadError as exc:
             raise ProbeVPSSetupFailed(
                 f"测试 VPS {host} 读 config 失败: "

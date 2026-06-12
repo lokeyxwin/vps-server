@@ -112,6 +112,17 @@ class XrayManager:
 
     def __init__(self, client: paramiko.SSHClient) -> None:
         self.client = client
+        self._use_sudo: bool | None = None
+
+    @property
+    def use_sudo(self) -> bool:
+        """特权命令是否需要 sudo：非 root 登录 → True。首次访问探一次 `id -u` 并缓存。
+
+        探测走只读命令，不改服务器；缓存避免每个特权操作都多一次 SSH 往返。
+        """
+        if self._use_sudo is None:
+            self._use_sudo = not service.is_root(self.client)
+        return self._use_sudo
 
     # -------- 查询类（直接代理 atom）--------
 
@@ -130,39 +141,39 @@ class XrayManager:
     # -------- 操作类（直接代理 atom，错误向上抛）--------
 
     def install(self) -> None:
-        service.install(self.client)
+        service.install(self.client, use_sudo=self.use_sudo)
 
     def uninstall(self) -> None:
-        service.uninstall(self.client)
+        service.uninstall(self.client, use_sudo=self.use_sudo)
 
     def start(self) -> None:
-        service.start(self.client)
+        service.start(self.client, use_sudo=self.use_sudo)
 
     def stop(self) -> None:
-        service.stop(self.client)
+        service.stop(self.client, use_sudo=self.use_sudo)
 
     def enable(self) -> None:
-        service.enable(self.client)
+        service.enable(self.client, use_sudo=self.use_sudo)
 
     def disable(self) -> None:
-        service.disable(self.client)
+        service.disable(self.client, use_sudo=self.use_sudo)
 
     def reload(self) -> None:
-        service.reload(self.client)
+        service.reload(self.client, use_sudo=self.use_sudo)
 
     # -------- 配置层（代理到 xray.config）--------
 
     def is_config_blank(self) -> bool:
-        return xc.is_config_blank(self.client)
+        return xc.is_config_blank(self.client, use_sudo=self.use_sudo)
 
     def write_default_config(self) -> None:
-        xc.write_default_config(self.client)
+        xc.write_default_config(self.client, use_sudo=self.use_sudo)
 
     def upload_config(self, config_dict: dict) -> None:
-        xc.upload_config(self.client, config_dict)
+        xc.upload_config(self.client, config_dict, use_sudo=self.use_sudo)
 
     def validate_config(self) -> None:
-        xc.validate_config(self.client)
+        xc.validate_config(self.client, use_sudo=self.use_sudo)
 
     def import_existing_bindings(self) -> list[dict]:
         """复合操作：读取服务器现行 config + 抽出"已部署的客户端 inbound 绑定"列表。
@@ -173,9 +184,11 @@ class XrayManager:
         业务用法：vps_init 重装时，需要把已挂在 xray 上的代理出口端口"扣掉"
         免得当成空闲重新分配；同时把这些绑定信息抄录到 proxy 表。
         """
-        if xc.is_config_blank(self.client):
+        if xc.is_config_blank(self.client, use_sudo=self.use_sudo):
             return []
-        return xc.extract_port_bindings(xc.read_config(self.client))
+        return xc.extract_port_bindings(
+            xc.read_config(self.client, use_sudo=self.use_sudo)
+        )
 
     def extract_existing_outbounds(self) -> list[dict]:
         """抠出现有出口配置(纳管核心,⭐ 抠信息类)。
@@ -201,10 +214,10 @@ class XrayManager:
 
         字段命名细节见 test/xray_worker/spec.md v5 §4 + §二。
         """
-        if xc.is_config_blank(self.client):
+        if xc.is_config_blank(self.client, use_sudo=self.use_sudo):
             return []
         try:
-            cfg = xc.read_config(self.client)
+            cfg = xc.read_config(self.client, use_sudo=self.use_sudo)
         except xc.ConfigReadError:
             return []
         return _parse_outbounds_from_config(cfg)

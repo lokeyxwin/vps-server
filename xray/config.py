@@ -34,7 +34,7 @@ import string
 import paramiko
 
 import config
-from ssh.ops import execute_command
+from ssh.ops import execute_command, sudo_prefix
 
 
 # ============================================================
@@ -573,11 +573,11 @@ DEFAULT_CONFIG_JSON = json.dumps(build_vps_direct_config(), indent=2)
 # SSH 操作：查 config 文件大小 / 是否空
 # ============================================================
 
-def get_config_size(client: paramiko.SSHClient) -> int:
+def get_config_size(client: paramiko.SSHClient, use_sudo: bool = False) -> int:
     """获取 config.json 文件大小（字节）。不存在或读取失败返回 0。"""
     result = execute_command(
         client,
-        f"stat -c %s {DEFAULT_CONFIG_PATH} 2>/dev/null || echo 0",
+        f"{sudo_prefix(use_sudo)}stat -c %s {DEFAULT_CONFIG_PATH} 2>/dev/null || echo 0",
     )
     try:
         return int(result["stdout"].strip())
@@ -585,12 +585,12 @@ def get_config_size(client: paramiko.SSHClient) -> int:
         return 0
 
 
-def is_config_blank(client: paramiko.SSHClient) -> bool:
+def is_config_blank(client: paramiko.SSHClient, use_sudo: bool = False) -> bool:
     """检查 config.json 是否空（缺失或 0 字节）。"""
-    return get_config_size(client) == 0
+    return get_config_size(client, use_sudo=use_sudo) == 0
 
 
-def read_config(client: paramiko.SSHClient) -> dict:
+def read_config(client: paramiko.SSHClient, use_sudo: bool = False) -> dict:
     """从服务器读取 xray config.json，解析成 dict 返回。
 
     返回规则：
@@ -602,7 +602,9 @@ def read_config(client: paramiko.SSHClient) -> dict:
     再调 read_config。
     """
     # 直接 cat；用 2>/dev/null 把"找不到文件"屏蔽（按空内容处理）
-    result = execute_command(client, f"cat {DEFAULT_CONFIG_PATH} 2>/dev/null")
+    result = execute_command(
+        client, f"{sudo_prefix(use_sudo)}cat {DEFAULT_CONFIG_PATH} 2>/dev/null"
+    )
     raw = result["stdout"]
     if not raw.strip():
         return {}
@@ -618,7 +620,7 @@ def read_config(client: paramiko.SSHClient) -> dict:
 # SSH 操作：写 config 文件
 # ============================================================
 
-def write_default_config(client: paramiko.SSHClient) -> None:
+def write_default_config(client: paramiko.SSHClient, use_sudo: bool = False) -> None:
     """把 VPS 直出场景的默认 config 写到服务器。
 
     用途：xray 装完但 config 空（x-ui 类面板场景）→ 服务起不来。
@@ -626,18 +628,22 @@ def write_default_config(client: paramiko.SSHClient) -> None:
 
     内部调用 upload_config(build_vps_direct_config())，失败抛 ConfigWriteError。
     """
-    upload_config(client, build_vps_direct_config())
+    upload_config(client, build_vps_direct_config(), use_sudo=use_sudo)
 
 
-def upload_config(client: paramiko.SSHClient, config_dict: dict) -> None:
+def upload_config(
+    client: paramiko.SSHClient, config_dict: dict, use_sudo: bool = False
+) -> None:
     """把任意 config dict 序列化后写到 DEFAULT_CONFIG_PATH。
 
-    用 heredoc 写入避免 JSON 中的 " 被 shell 解析。
+    用 heredoc 喂给 tee 写入：避免 JSON 中的 " 被 shell 解析，且非 root 时
+    `sudo -n tee` 能以 root 身份落盘（重定向 `>` 由当前 shell 执行，非 root
+    无法写 root 属主的 config.json，所以不能用 `sudo cat > file` 那种写法）。
     写入失败抛 ConfigWriteError，文案带 stderr 便于排查。
     """
     payload = json.dumps(config_dict, indent=2)
     cmd = (
-        f"cat > {DEFAULT_CONFIG_PATH} << 'XRAY_CONFIG_EOF'\n"
+        f"{sudo_prefix(use_sudo)}tee {DEFAULT_CONFIG_PATH} > /dev/null << 'XRAY_CONFIG_EOF'\n"
         f"{payload}\n"
         f"XRAY_CONFIG_EOF"
     )
@@ -653,7 +659,7 @@ def upload_config(client: paramiko.SSHClient, config_dict: dict) -> None:
 # SSH 操作：校验 config 语法
 # ============================================================
 
-def validate_config(client: paramiko.SSHClient) -> None:
+def validate_config(client: paramiko.SSHClient, use_sudo: bool = False) -> None:
     """跑 `xray -test -c <config.json>` 校验 config 语法。
 
     Xray 26.x CLI 形态：
@@ -667,7 +673,9 @@ def validate_config(client: paramiko.SSHClient) -> None:
     校验失败抛 ConfigValidationError，文案带 xray 的 stdout/stderr 便于定位。
     业务一般在 upload_config 后、reload 前调一次，避免推坏 config 上线。
     """
-    result = execute_command(client, f"xray -test -c {DEFAULT_CONFIG_PATH}")
+    result = execute_command(
+        client, f"{sudo_prefix(use_sudo)}xray -test -c {DEFAULT_CONFIG_PATH}"
+    )
     if result["exit_code"] != 0:
         # xray 校验错误可能在 stdout 也可能在 stderr，两边都看
         detail = ((result["stderr"] or "") + (result["stdout"] or ""))[:400]

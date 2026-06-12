@@ -188,7 +188,7 @@ class XrayWorker:
             with VPSSession(ip, creds["user"], creds["pwd"], creds["port"]) as sess:
                 xray = XrayManager(sess.client)
 
-                branch = self._classify(xray, creds["xray_version_before"])
+                branch = self._classify(xray)
                 logger.info("现状判断: task_id=%s → 分支 %s", task_id, branch)
 
                 if branch == "A":
@@ -301,15 +301,19 @@ class XrayWorker:
                 "user": vps.username,
                 "pwd": vps.get_password(),
                 "port": vps.port,
-                "xray_version_before": vps.xray_version,
             }
 
     # ============ 现状判断 ============
 
     @staticmethod
-    def _classify(xray: XrayManager, xray_version_before: str) -> str:
-        """看 xray 现状, 返回分支代号 'A' / 'B' / 'C'."""
-        if not xray_version_before or not xray.is_installed():
+    def _classify(xray: XrayManager) -> str:
+        """实时探测 xray 现状, 返回分支代号 'A' / 'B' / 'C'.
+
+        拿到任务后实时探 `xray version`: 有版本 = 已装(走 B/C), 无版本 = 没装(走 A)。
+        不看 DB 的 xray_version —— 那是 XrayWorker 完工时自己写的产出, 第一次进来必为空,
+        拿它当判据会把"已装在跑"的机器误判成全新去重装。
+        """
+        if not xray.version():
             return "A"
         if not xray.is_running():
             return "B"
@@ -355,11 +359,15 @@ class XrayWorker:
         proxy_entries = [o for o in outbounds if o["outbound_protocol"] != "freedom"]
 
         if outbounds:
-            cfg = xc.read_config(client)
+            cfg = xc.read_config(client, use_sudo=xray.use_sudo)
             if not cfg:
                 cfg = xc.build_vps_direct_config()
         else:
-            cfg = xc.build_vps_direct_config() if xc.is_config_blank(client) else xc.read_config(client)
+            cfg = (
+                xc.build_vps_direct_config()
+                if xc.is_config_blank(client, use_sudo=xray.use_sudo)
+                else xc.read_config(client, use_sudo=xray.use_sudo)
+            )
 
         if direct_entries:
             default_port = direct_entries[0]["vps_port"]

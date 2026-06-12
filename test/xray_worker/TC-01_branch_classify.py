@@ -6,16 +6,17 @@
 TC-01 XrayWorker._classify 现状判断 3 分支 (spec v5.1 §3)
 
 故事:
-  XrayWorker 抢到 task 后看 xray 现状, 决定走哪个前置分支:
-    - 分支 A: xray 没装       (vps.xray_version 空 或 is_installed() False)
-    - 分支 B: 装了没跑          (xray_version 非空 + is_installed True + is_running False)
-    - 分支 C: 装着且跑着        (xray_version 非空 + is_installed True + is_running True)
+  XrayWorker 抢到 task 后**实时探测** xray 现状, 决定走哪个前置分支:
+    - 分支 A: 没装           (实时 xray version 空)
+    - 分支 B: 装了没跑        (version 非空 + is_running False)
+    - 分支 C: 装着且跑着      (version 非空 + is_running True)
+  判据是实时 `xray version`, 不看 DB 的 vps.xray_version ——
+  那是 XrayWorker 完工时自己写的产出, 第一次进来必为空, 拿它当判据会误判 A 去重装。
 
 测试矩阵:
-  TC-01-a vps.xray_version="" + is_installed=anything       → 'A'
-  TC-01-b vps.xray_version="X" + is_installed=False         → 'A' (OR 关系兜底)
-  TC-01-c vps.xray_version="X" + is_installed=True  + running=False → 'B'
-  TC-01-d vps.xray_version="X" + is_installed=True  + running=True  → 'C'
+  TC-01-a version="" + running=anything   → 'A'
+  TC-01-b version="X" + running=False      → 'B'
+  TC-01-c version="X" + running=True       → 'C'
 ========================================================================
 """
 
@@ -27,9 +28,9 @@ from unittest.mock import MagicMock
 from workers.xray_worker import XrayWorker
 
 
-def _make_xray(installed: bool, running: bool) -> MagicMock:
+def _make_xray(version: str, running: bool) -> MagicMock:
     xray = MagicMock()
-    xray.is_installed.return_value = installed
+    xray.version.return_value = version
     xray.is_running.return_value = running
     return xray
 
@@ -37,22 +38,18 @@ def _make_xray(installed: bool, running: bool) -> MagicMock:
 class TestClassify(unittest.TestCase):
 
     def test_tc01a_empty_version_returns_A(self):
-        xray = _make_xray(installed=True, running=True)
-        self.assertEqual(XrayWorker._classify(xray, ""), "A")
-        # 短路: 拿到 'A' 就不需要再问 is_running
+        xray = _make_xray(version="", running=True)
+        self.assertEqual(XrayWorker._classify(xray), "A")
+        # 短路: 没版本就是没装, 不需要再问 is_running
         xray.is_running.assert_not_called()
 
-    def test_tc01b_version_set_but_not_installed_returns_A(self):
-        xray = _make_xray(installed=False, running=False)
-        self.assertEqual(XrayWorker._classify(xray, "Xray 26.3.27"), "A")
+    def test_tc01b_installed_not_running_returns_B(self):
+        xray = _make_xray(version="Xray 26.3.27", running=False)
+        self.assertEqual(XrayWorker._classify(xray), "B")
 
-    def test_tc01c_installed_not_running_returns_B(self):
-        xray = _make_xray(installed=True, running=False)
-        self.assertEqual(XrayWorker._classify(xray, "Xray 26.3.27"), "B")
-
-    def test_tc01d_installed_and_running_returns_C(self):
-        xray = _make_xray(installed=True, running=True)
-        self.assertEqual(XrayWorker._classify(xray, "Xray 26.3.27"), "C")
+    def test_tc01c_installed_and_running_returns_C(self):
+        xray = _make_xray(version="Xray 26.3.27", running=True)
+        self.assertEqual(XrayWorker._classify(xray), "C")
 
 
 if __name__ == "__main__":
