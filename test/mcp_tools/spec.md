@@ -12,7 +12,7 @@
 
 ## 一、整理后的要点
 
-### 1. 6 个工具总账
+### 1. 工具总账（增量维护，当前清单见下表）
 
 | # | Tool.name | 文件 | 业务意图 | 类别 |
 |---|----------|------|---------|------|
@@ -270,7 +270,7 @@ ALL_TOOLS = [
 3. **description 列全 status_code**: 跟 §6 映射表一对一, 不漏不多
 4. **新增 status_code**: 必须先改 §6 映射表 + 对应 description, 再让 worker 写 DB
 5. **handler 不写业务**: SQL / 状态机 / 业务规则全部在 worker 或查询函数里
-6. **加新工具需 ADR 背书**: 新工具命名 + status_code 映射必须有 ADR 背书(`update_ip_expire_date` 由 ADR-0008 §3.3 背书); 写入工具额外受 CLAUDE.local.md §14.3 ABCD 4 条规则约束
+6. **工具数量不是不变量**: 工具集随业务增量演进, §1 总账是当前快照; 新增工具 = §1 总账 +1 行 + §6 加 status_code 映射, **不为「多一个工具」开 ADR / 不在测试 assert 工具总数**(仅当工具引入新架构决策才开 ADR)。写入工具额外受 CLAUDE.local.md §14.3 ABCD 约束。当前每个工具的命名 + status_code 映射须有 ADR 背书(`update_ip_expire_date` 由 ADR-0008 §3.3 背书)
 
 ---
 
@@ -318,3 +318,4 @@ MCP 工具层是**对外协议适配层**, 本身就是"工具"的暴露, 不再
 - v1 2026-06-09 初版(对应 ADR-0007 落地)
 - v1.1 2026-06-09 §6.1 status 列表对齐 SSHWorker 代码现状(grep 校准, 修正 ADR-0007 落地时凭印象写错的 3 处: `duplicate`→`already_registered` / `ssh_auth_failed`→`auth_failed` / 补 `ssh_failed`)
 - v2 2026-06-13 加 `update_ip_expire_date`(项目第一个 update_* 写入工具, ADR-0008 §3.3 ABCD 落地): §1 总账 5→6 / 新增 §6.6 / §8 不变量 #6 改「加新工具需 ADR 背书」
+- v2.1 2026-06-13 订正「工具数量不写死为不变量」(同源 CLAUDE.md §8 反模式): §1 标题去固定数字 / §8 不变量 #6 改「工具数量不是不变量, 加工具不开 ADR、不 assert 总数」(对齐 CLAUDE.local §14.5)
