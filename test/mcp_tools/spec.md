@@ -12,7 +12,7 @@
 
 ## 一、整理后的要点
 
-### 1. 5 个工具总账
+### 1. 6 个工具总账
 
 | # | Tool.name | 文件 | 业务意图 | 类别 |
 |---|----------|------|---------|------|
@@ -21,6 +21,7 @@
 | 3 | `get_vps_registration_status` | `tools/get_vps_registration_status.py` | 查 VPS 装机进度(适合 register_vps 之后追问) | 状态查询 |
 | 4 | `get_ip_registration_status` | `tools/get_ip_registration_status.py` | 查 IP 配置进度 + 配好时返代理节点账密 | 状态查询 |
 | 5 | `get_available_proxy_nodes` | `tools/get_available_proxy_nodes.py` | 列当前可用代理节点(给用户挑节点) | 数据查询 |
+| 6 | `update_ip_expire_date` | `tools/update_ip_expire_date.py` | 改某条已登记 IP 的到期日(白名单 patch 单字段) | 写入修改 |
 
 ### 2. 命名规约(强约束)
 
@@ -222,6 +223,23 @@ DB 里新增 last_error_code → 本表新增一行 → 对应工具 description
 
 (沿用现有 description, 不在本 spec 重列)
 
+#### 6.6 `update_ip_expire_date`
+
+写入修改工具(项目第一个 update_*), 由 ADR-0008 §3.3 ABCD 背书。
+入参: `ip_id`(主键精准, 必填) + `expire_date`(YYYY-MM-DD, 必填)。
+只 patch `ip_record.expire_date` 单列, 不碰 is_active / 其他字段。
+
+| status | 后端含义 | description 教 agent 转告 |
+|--------|---------|------------------------|
+| `ok` | 命中 ip_id, expire_date 已更新 | "已把 IP <egress_ip> 的到期日更新为 <expire_date>" |
+| `not_found` | ip_id 不存在 | "没找到这条 IP, 确认 ip_id; 可能它根本没登记, 要登记走 register_ip" |
+| `invalid_date` | expire_date 非合法 YYYY-MM-DD | "日期格式要 YYYY-MM-DD(如 2026-06-18)" |
+
+> 批量看图场景(agent 编排): 用户甩面板截图「只补已登记的」→ agent 用
+> `get_available_proxy_nodes` 按出口IP匹配拿 ip_id → 匹配到的逐条调本工具;
+> 匹配不到(过期/没挂)→ 跳过, 不自动登记, 提示走 register_ip。
+> 本工具一次一条, agent 逐行循环。
+
 ### 7. 注册规约 — `tools/__init__.py::ALL_TOOLS`
 
 ```python
@@ -252,7 +270,7 @@ ALL_TOOLS = [
 3. **description 列全 status_code**: 跟 §6 映射表一对一, 不漏不多
 4. **新增 status_code**: 必须先改 §6 映射表 + 对应 description, 再让 worker 写 DB
 5. **handler 不写业务**: SQL / 状态机 / 业务规则全部在 worker 或查询函数里
-6. **5 个工具是当前完整对外面**: 加新工具 → 加新 ADR(命名 + status_code 映射上 §6)
+6. **加新工具需 ADR 背书**: 新工具命名 + status_code 映射必须有 ADR 背书(`update_ip_expire_date` 由 ADR-0008 §3.3 背书); 写入工具额外受 CLAUDE.local.md §14.3 ABCD 4 条规则约束
 
 ---
 
@@ -299,3 +317,4 @@ MCP 工具层是**对外协议适配层**, 本身就是"工具"的暴露, 不再
 
 - v1 2026-06-09 初版(对应 ADR-0007 落地)
 - v1.1 2026-06-09 §6.1 status 列表对齐 SSHWorker 代码现状(grep 校准, 修正 ADR-0007 落地时凭印象写错的 3 处: `duplicate`→`already_registered` / `ssh_auth_failed`→`auth_failed` / 补 `ssh_failed`)
+- v2 2026-06-13 加 `update_ip_expire_date`(项目第一个 update_* 写入工具, ADR-0008 §3.3 ABCD 落地): §1 总账 5→6 / 新增 §6.6 / §8 不变量 #6 改「加新工具需 ADR 背书」

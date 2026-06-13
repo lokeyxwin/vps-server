@@ -284,3 +284,54 @@ def list_available_proxies(country_code: str = "") -> list[dict]:
 
     logger.info("查询完成: 命中 %d 条可用节点", len(results))
     return results
+
+
+# ============================================================
+# IP 到期日写入 (白名单 patch, ADR-0008 §3.3 ABCD)
+# ============================================================
+
+def update_ip_expire_date(ip_id: int, expire_date: str) -> dict:
+    """白名单 patch: 只改 ip_record.expire_date 单列 (CLAUDE.local.md §14.3 ABCD).
+
+    规则 A 主键精准: 按 ip_id 主键定位单行.
+    规则 B/C 白名单单列: 只写 expire_date, 不碰 is_active / egress_ip 等任何其他字段,
+    不整对象覆盖.
+    只校验日期格式 (YYYY-MM-DD), 不拦过去日期 (用户拍"允许任意合法日期").
+
+    返回形状 (test/mcp_tools/spec.md §6.6):
+      {"status": "ok", "ip": {"id", "egress_ip", "country_code",
+                              "expire_date", "is_active"}}
+      {"status": "not_found"}
+      {"status": "invalid_date", "expire_date": <原值>}
+    """
+    try:
+        parsed = date.fromisoformat(expire_date)
+    except (ValueError, TypeError):
+        logger.info(
+            "update_ip_expire_date: ip_id=%s 日期非法 %r → invalid_date",
+            ip_id, expire_date,
+        )
+        return {"status": "invalid_date", "expire_date": expire_date}
+
+    with session_scope() as s:
+        ip = s.get(IPRecord, ip_id)
+        if ip is None:
+            logger.info("update_ip_expire_date: ip_id=%s 不存在 → not_found", ip_id)
+            return {"status": "not_found"}
+
+        ip.expire_date = parsed
+        s.flush()
+        logger.info(
+            "update_ip_expire_date: ip_id=%s → expire_date=%s",
+            ip_id, parsed.isoformat(),
+        )
+        return {
+            "status": "ok",
+            "ip": {
+                "id": ip.id,
+                "egress_ip": ip.egress_ip,
+                "country_code": ip.country_code,
+                "expire_date": ip.expire_date.isoformat(),
+                "is_active": ip.is_active,
+            },
+        }

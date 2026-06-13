@@ -12,6 +12,7 @@
 - 写入意图工具: register_vps / register_ip
 - 状态查询工具: get_vps_registration_status / get_ip_registration_status
 - 数据查询工具: get_available_proxy_nodes
+- 写入修改工具 (admin): update_ip_expire_date
 - 运维工具 (admin): init_db / init_probe_vps
 
 约束:
@@ -36,6 +37,8 @@ from tools.register_ip import TOOL as _register_ip_tool
 from tools.register_ip import handler as _register_ip_handler
 from tools.register_vps import TOOL as _register_vps_tool
 from tools.register_vps import handler as _register_vps_handler
+from tools.update_ip_expire_date import TOOL as _update_ip_expire_date_tool
+from tools.update_ip_expire_date import handler as _update_ip_expire_date_handler
 
 
 ALL_TOOLS = [
@@ -47,6 +50,8 @@ ALL_TOOLS = [
     (_get_ip_status_tool, _get_ip_status_handler),
     # ---------- 数据查询工具 ----------
     (_get_available_proxy_nodes_tool, _get_available_proxy_nodes_handler),
+    # ---------- 写入修改工具 (admin) ----------
+    (_update_ip_expire_date_tool, _update_ip_expire_date_handler),
     # ---------- 运维工具 (admin) ----------
     (_init_db_tool, _init_db_handler),
     (_init_probe_vps_tool, _init_probe_vps_handler),
