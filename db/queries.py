@@ -339,6 +339,66 @@ def get_registered_ips() -> list[dict]:
 
 
 # ============================================================
+# 全量已登记 VPS 查询 (装/未装、忙/闲、过期/未过期, 单表不 join)
+# ============================================================
+
+def get_registered_vps() -> list[dict]:
+    """列出全部已登记 VPS(装/未装、忙/闲、过期/未过期), 单表 vps_record, 不 join, 不过滤.
+
+    运维 / agent 看 VPS 池全貌(谁装了 xray / 忙闲 stage / 挂了几条代理 / 到期 /
+    是否过期) + 拿 vps_id (备未来 update_vps_expire_date 用). 跟
+    get_vps_registration_status(按 id 查单台装机进度)区分: 本函数是列全量、不带 task
+    进度. **绝不返 SSH 凭据(密码 / 端口 / 登录名)**.
+
+    排序: is_active 升序(过期=0 排前) → ip.
+
+    返回 list[dict], 每条 (test/mcp_tools/spec.md §6.8):
+        {"vps_id": int, "ip": str,
+         "os_name": str, "os_version": str,
+         "xray_version": str,            # ""=还没装 xray
+         "stage": str,                   # connectable=空闲 / running=有工人在用
+         "used_port_count": int,         # 挂了几条业务代理
+         "expire_date": "2026-06-18" | None,
+         "is_active": 1 | 0,             # 1可用/0过期
+         "provider_domain": str}
+    空库返 [].
+    """
+    logger.info("查询全部已登记 VPS(装/未装、忙/闲、过期/未过期)")
+
+    with session_scope() as s:
+        rows = (
+            s.query(VPSRecord)
+            .order_by(
+                VPSRecord.is_active.asc(),
+                VPSRecord.ip,
+            )
+            .all()
+        )
+        results = [
+            {
+                "vps_id": v.id,
+                "ip": v.ip,
+                "os_name": v.os_name,
+                "os_version": v.os_version,
+                "xray_version": v.xray_version,
+                "stage": v.stage,
+                "used_port_count": v.used_port_count,
+                "expire_date": (
+                    v.expire_date.isoformat()
+                    if v.expire_date is not None
+                    else None
+                ),
+                "is_active": v.is_active,
+                "provider_domain": v.provider_domain,
+            }
+            for v in rows
+        ]
+
+    logger.info("查询完成: 命中 %d 台已登记 VPS", len(results))
+    return results
+
+
+# ============================================================
 # IP 到期日写入 (白名单 patch, ADR-0008 §3.3 ABCD)
 # ============================================================
 
