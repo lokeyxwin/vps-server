@@ -22,6 +22,7 @@
 | 4 | `get_ip_registration_status` | `tools/get_ip_registration_status.py` | 查 IP 配置进度 + 配好时返代理节点账密 | 状态查询 |
 | 5 | `get_available_proxy_nodes` | `tools/get_available_proxy_nodes.py` | 列当前可用代理节点(给用户挑节点) | 数据查询 |
 | 6 | `update_ip_expire_date` | `tools/update_ip_expire_date.py` | 改某条已登记 IP 的到期日(白名单 patch 单字段) | 写入修改 |
+| 7 | `get_registered_ips` | `tools/get_registered_ips.py` | 列全部已登记 IP(过期+未过期), 给批量补到期日拿 ip_id | 数据查询 |
 
 ### 2. 命名规约(强约束)
 
@@ -240,6 +241,20 @@ DB 里新增 last_error_code → 本表新增一行 → 对应工具 description
 > 匹配不到(过期/没挂)→ 跳过, 不自动登记, 提示走 register_ip。
 > 本工具一次一条, agent 逐行循环。
 
+#### 6.7 `get_registered_ips`
+
+数据查询工具(只读, admin)。列**全部**已登记 IP(过期 + 未过期), 单表 ip_record
+不 join, 无过滤。跟 §6.5 get_available_proxy_nodes(只列 USING 可用代理节点)区分:
+本工具能看到过期/没挂的 IP, 给「批量补到期日」拿过期 IP 的 ip_id。
+
+返回 list[dict], 每条:
+{ip_id, egress_ip, country_code, country_name, city,
+ expire_date(null=纳管未知), is_active(1可用/0过期)}。
+**绝不返上游密码/凭据**。空库返 []。
+
+agent 用法: 拿每条 ip_id 喂给 update_ip_expire_date; 按 egress_ip 对用户截图那几行;
+对不上的(没登记)跳过 → 提示走 register_ip。
+
 ### 7. 注册规约 — `tools/__init__.py::ALL_TOOLS`
 
 ```python
@@ -319,3 +334,4 @@ MCP 工具层是**对外协议适配层**, 本身就是"工具"的暴露, 不再
 - v1.1 2026-06-09 §6.1 status 列表对齐 SSHWorker 代码现状(grep 校准, 修正 ADR-0007 落地时凭印象写错的 3 处: `duplicate`→`already_registered` / `ssh_auth_failed`→`auth_failed` / 补 `ssh_failed`)
 - v2 2026-06-13 加 `update_ip_expire_date`(项目第一个 update_* 写入工具, ADR-0008 §3.3 ABCD 落地): §1 总账 5→6 / 新增 §6.6 / §8 不变量 #6 改「加新工具需 ADR 背书」
 - v2.1 2026-06-13 订正「工具数量不写死为不变量」(同源 CLAUDE.md §8 反模式): §1 标题去固定数字 / §8 不变量 #6 改「工具数量不是不变量, 加工具不开 ADR、不 assert 总数」(对齐 CLAUDE.local §14.5)
+- v3 2026-06-14 加 `get_registered_ips`(列全量已登记 IP, 补「批量补到期日拿 ip_id」缺口): §1 总账 +1 行 / 新增 §6.7

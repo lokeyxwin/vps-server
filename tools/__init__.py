@@ -11,7 +11,7 @@
 工具暴露分类 (ADR-0001 §决策 §5 + ADR-0007 §决策 §3 + ADR-0009 §决策 §6):
 - 写入意图工具: register_vps / register_ip
 - 状态查询工具: get_vps_registration_status / get_ip_registration_status
-- 数据查询工具: get_available_proxy_nodes
+- 数据查询工具: get_available_proxy_nodes / get_registered_ips
 - 写入修改工具 (admin): update_ip_expire_date
 - 运维工具 (admin): init_db / init_probe_vps
 
@@ -25,6 +25,8 @@
 
 from tools.get_available_proxy_nodes import TOOL as _get_available_proxy_nodes_tool
 from tools.get_available_proxy_nodes import handler as _get_available_proxy_nodes_handler
+from tools.get_registered_ips import TOOL as _get_registered_ips_tool
+from tools.get_registered_ips import handler as _get_registered_ips_handler
 from tools.get_ip_registration_status import TOOL as _get_ip_status_tool
 from tools.get_ip_registration_status import handler as _get_ip_status_handler
 from tools.get_vps_registration_status import TOOL as _get_vps_status_tool
@@ -50,6 +52,7 @@ ALL_TOOLS = [
     (_get_ip_status_tool, _get_ip_status_handler),
     # ---------- 数据查询工具 ----------
     (_get_available_proxy_nodes_tool, _get_available_proxy_nodes_handler),
+    (_get_registered_ips_tool, _get_registered_ips_handler),
     # ---------- 写入修改工具 (admin) ----------
     (_update_ip_expire_date_tool, _update_ip_expire_date_handler),
     # ---------- 运维工具 (admin) ----------

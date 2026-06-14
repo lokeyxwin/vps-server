@@ -287,6 +287,58 @@ def list_available_proxies(country_code: str = "") -> list[dict]:
 
 
 # ============================================================
+# 全量已登记 IP 查询 (过期 + 未过期, 单表不 join)
+# ============================================================
+
+def get_registered_ips() -> list[dict]:
+    """列出全部已登记 IP(过期 + 未过期), 单表 ip_record, 不 join, 不过滤.
+
+    给 agent 补到期日批量场景用: 拿到过期/没挂 IP 的 ip_id, 配合
+    update_ip_expire_date 精准改. 跟 list_available_proxies(只列 USING 可用
+    代理节点)区分: 本函数能看到过期/没挂的 IP. 绝不返上游密码/凭据.
+
+    排序: is_active 升序(过期=0 排前, 方便补到期日) → country_code → egress_ip.
+
+    返回 list[dict], 每条 (test/mcp_tools/spec.md §6.7):
+        {"ip_id": int, "egress_ip": str,
+         "country_code": str, "country_name": str, "city": str,
+         "expire_date": "2026-06-18" | None, "is_active": 1 | 0}
+    空库返 [].
+    """
+    logger.info("查询全部已登记 IP(过期+未过期)")
+
+    with session_scope() as s:
+        rows = (
+            s.query(IPRecord)
+            .order_by(
+                IPRecord.is_active.asc(),
+                IPRecord.country_code,
+                IPRecord.egress_ip,
+            )
+            .all()
+        )
+        results = [
+            {
+                "ip_id": ip.id,
+                "egress_ip": ip.egress_ip,
+                "country_code": ip.country_code,
+                "country_name": ip.country_name,
+                "city": ip.city,
+                "expire_date": (
+                    ip.expire_date.isoformat()
+                    if ip.expire_date is not None
+                    else None
+                ),
+                "is_active": ip.is_active,
+            }
+            for ip in rows
+        ]
+
+    logger.info("查询完成: 命中 %d 条已登记 IP", len(results))
+    return results
+
+
+# ============================================================
 # IP 到期日写入 (白名单 patch, ADR-0008 §3.3 ABCD)
 # ============================================================
 
