@@ -21,6 +21,7 @@ from sqlalchemy import or_
 from db.models import (
     IPRecord,
     IPTask,
+    ProxyProtocol,
     ProxyRecord,
     ProxyStatus,
     TaskStatus,
@@ -29,6 +30,7 @@ from db.models import (
 )
 from db.session import session_scope
 from log import get_logger
+from toolbox.share_link import build_ss_url
 
 
 logger = get_logger("db.queries")
@@ -117,9 +119,12 @@ def query_ip_status(
        "ip":   {"id", "egress_ip", "country_code", "expire_date"},
        "task": {"id", "status", "last_error_code", "last_error_msg",
                 "completed_at"} | None,
-       "proxy_node": {"vps_id", "vps_ip", "vps_port", "protocol",
-                      "inbound_user", "inbound_pwd", "status"} | None}
+       "proxy_node": {"vps_id", "vps_ip", "vps_port", "protocol", "method",
+                      "inbound_user", "inbound_pwd", "share_link", "status"} | None}
       {"status": "not_found"}
+
+    proxy_node.method = SS 加密方式(socks5 节点留空); share_link = SS 标准 ss:// 链接
+    (socks5 节点留空, ADR-0011 §决策 §8).
 
     proxy_node 字段只在 task.status=done 且对应 proxy_record 存在时填, 否则 None.
     """
@@ -196,13 +201,22 @@ def _build_proxy_node(s, ip_id: int) -> dict | None:
     if vps is None:
         return None
 
+    pwd = proxy.get_inbound_pwd()
+    share_link = ""
+    if proxy.protocol == ProxyProtocol.SHADOWSOCKS:
+        share_link = build_ss_url(
+            proxy.method, pwd, vps.ip, proxy.vps_port, tag=str(ip_id)
+        )
+
     return {
         "vps_id": vps.id,
         "vps_ip": vps.ip,
         "vps_port": proxy.vps_port,
         "protocol": proxy.protocol,
+        "method": proxy.method,
         "inbound_user": proxy.inbound_user,
-        "inbound_pwd": proxy.get_inbound_pwd(),
+        "inbound_pwd": pwd,
+        "share_link": share_link,
         "status": proxy.status,
     }
 
@@ -210,6 +224,36 @@ def _build_proxy_node(s, ip_id: int) -> dict | None:
 # ============================================================
 # 可用代理节点查询
 # ============================================================
+
+def _build_available_proxy(p: ProxyRecord, v: VPSRecord, ip: IPRecord) -> dict:
+    """把 (proxy, vps, ip) 三表行组装成一条可用代理节点 dict.
+
+    shadowsocks 节点拼 SIP002 share_link(method+明文pwd+vps地址端口, tag=国家-ip_id);
+    socks5 存量节点 share_link 留空串(socks5 无统一分享标准, ADR-0011 §决策 §8).
+    """
+    pwd = p.get_inbound_pwd()
+    share_link = ""
+    if p.protocol == ProxyProtocol.SHADOWSOCKS:
+        tag = f"{ip.country_code}-{ip.id}" if ip.country_code else str(ip.id)
+        share_link = build_ss_url(p.method, pwd, v.ip, p.vps_port, tag=tag)
+
+    return {
+        "proxy_id": p.id,
+        "vps_id": v.id,
+        "ip_id": ip.id,
+        "protocol": p.protocol,
+        "method": p.method,
+        "host": v.ip,
+        "port": p.vps_port,
+        "username": p.inbound_user,
+        "password": pwd,
+        "share_link": share_link,
+        "egress_ip": ip.egress_ip,
+        "country_code": ip.country_code,
+        "country_name": ip.country_name,
+        "city": ip.city,
+    }
+
 
 def list_available_proxies(country_code: str = "") -> list[dict]:
     """列出所有可用的代理节点.
@@ -228,11 +272,13 @@ def list_available_proxies(country_code: str = "") -> list[dict]:
             "proxy_id": int,
             "vps_id": int,
             "ip_id": int,
-            "protocol": "socks5",
+            "protocol": "shadowsocks",        # 新部署节点 / "socks5"=存量
+            "method": "aes-256-gcm",          # SS 加密方式(socks5 节点留空)
             "host": "203.0.113.10",        # VPS 入口 IP
             "port": 18441,                    # VPS 上的端口
             "username": "xxx",                # inbound 账号
             "password": "yyy",                # inbound 明文密码
+            "share_link": "ss://...",         # SS 标准 ss:// 链接(socks5 节点留空)
             "egress_ip": "198.51.100.10",       # 真正出口 IP
             "country_code": "SG",
             "country_name": "Singapore",
@@ -265,20 +311,7 @@ def list_available_proxies(country_code: str = "") -> list[dict]:
         rows = query.all()
 
         results = [
-            {
-                "proxy_id": p.id,
-                "vps_id": v.id,
-                "ip_id": ip.id,
-                "protocol": p.protocol,
-                "host": v.ip,
-                "port": p.vps_port,
-                "username": p.inbound_user,
-                "password": p.get_inbound_pwd(),
-                "egress_ip": ip.egress_ip,
-                "country_code": ip.country_code,
-                "country_name": ip.country_name,
-                "city": ip.city,
-            }
+            _build_available_proxy(p, v, ip)
             for p, v, ip in rows
         ]
 

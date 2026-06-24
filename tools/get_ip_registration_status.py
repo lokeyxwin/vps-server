@@ -24,9 +24,16 @@ TOOL = Tool(
     title="查询 IP 配置进度 + 配好时返代理节点",
     description=(
         "查 IP 配置进度. join ip_record + ip_task (最新一条) + proxy_record "
-        "(task.status=done 时) 一次拿全 ⭐ 一条龙, 配好时直接返代理节点账密, "
-        "agent 一次告诉用户 '节点 VPS_IP:port 账密 user/pwd', 不再追问.\n"
+        "(task.status=done 时) 一次拿全 ⭐ 一条龙, 配好时直接返代理节点账密 + 分享链接, "
+        "agent 一次告诉用户 '节点配好啦, 复制这条 ss:// 链接导入', 不再追问.\n"
         "ip_id 或 task_id 二选一传; ip_id 优先(IP 表更通用).\n"
+        "\n"
+        "proxy_node 字段含 protocol(协议) / method(加密方式, shadowsocks 才有) / "
+        "vps_ip / vps_port / inbound_user / inbound_pwd / share_link(标准分享链接) / status.\n"
+        "交付优先用 share_link: protocol=shadowsocks 时 share_link 是标准 ss:// 链接(SIP002), "
+        "直接发给用户复制粘贴或扫码导入小火箭/v2rayNG/Clash, 跨客户端通用; "
+        "protocol=socks5(存量) 时 share_link 为空, 只能整理成手动填写格式(IP/端口/账号/密码), "
+        "不要伪造 ss:// 链接.\n"
         "\n"
         "典型场景:\n"
         "- 用户说 '我那条 IP 配好了吗' / '挂上了吗' / '给我代理节点' → 调本工具.\n"
@@ -38,9 +45,11 @@ TOOL = Tool(
         "\n"
         "返回 status 含义 (照此转告用户):\n"
         "- ok + task.status=done + proxy_node.status=using: 完全配好且通. "
-        "  转告 '配好啦! 节点 VPS_IP:port, socks5 账号 X 密码 Y, 完全可用'.\n"
+        "  shadowsocks 节点转告 '配好啦! 复制这条 ss:// 链接导入小火箭/v2rayNG/Clash 即可: "
+        "  <share_link>'(可加一句'要二维码我帮你生成扫码导入'); "
+        "  socks5 存量节点(share_link 空)转告 '配好啦! 节点 VPS_IP:port, 账号 X 密码 Y, 完全可用'.\n"
         "- ok + task.status=done + proxy_node.status=pending_fw: 代理挂上了但外部进不来. "
-        "  转告 '代理已配好但外部进不来, 请登录 VPS 厂商面板 (阿里云/腾讯云等) "
+        "  转告 '代理已配好(链接 <share_link>)但外部进不来, 请登录 VPS 厂商面板 (阿里云/腾讯云等) "
         "  在安全策略组放行端口 PORT'.\n"
         "- ok + task.status=done + proxy_node=null: 异常 (本来该有节点). "
         "  转告 '后台标记完成但代理节点丢了, 把 ip_id / task_id 发给管理员排查'.\n"
@@ -71,7 +80,9 @@ TOOL = Tool(
         "  '配好没' 看 task.status=done + proxy_node 是否非空.\n"
         "- 不要在 task.status=in_progress 时承诺 '马上好', 老老实实说 '等几分钟'.\n"
         "- 不要把 proxy_node.inbound_pwd 当 '永久密码' 转告 —— 这条凭据跟 VPS+端口 "
-        "  绑死, 这条 IP 挂别的 VPS 时是另一对账密."
+        "  绑死, 这条 IP 挂别的 VPS 时是另一对账密.\n"
+        "- 不要把 socks5 存量节点(share_link 空)硬拼成 ss:// 链接 —— socks5 没统一分享标准, "
+        "  只能整理成手动填写格式."
     ),
     inputSchema={
         "type": "object",

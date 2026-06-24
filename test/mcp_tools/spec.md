@@ -206,16 +206,19 @@ DB 里新增 last_error_code → 本表新增一行 → 对应工具 description
   },
   "proxy_node": {                              // task.status=done 时才有, 否则 null
     "vps_id": 1, "vps_ip": "10.0.0.1", "vps_port": 8765,
-    "protocol": "socks5",
+    "protocol": "shadowsocks",                 // 新部署 / "socks5"=存量
+    "method": "aes-256-gcm",                   // SS 加密方式(socks5 节点留空)
     "inbound_user": "...", "inbound_pwd": "...",
+    "share_link": "ss://...",                  // SS 标准 ss:// 链接(socks5 节点留空), ADR-0011 §8
     "status": "using" | "pending_fw"
   } | null
 }
 ```
 
-教 agent 怎么转告:
-- `task.status=done` + `proxy_node.status=using` → "配好啦, 节点 VPS_IP:port socks5 账密 user/pwd, 完全可用"
-- `task.status=done` + `proxy_node.status=pending_fw` → "代理已挂上, 但外部进不来, 请登录 VPS 厂商面板放行端口 X"
+教 agent 怎么转告(交付优先用 share_link, ADR-0011 §8):
+- `task.status=done` + `proxy_node.status=using` + protocol=shadowsocks → "配好啦, 复制这条 ss:// 链接导入小火箭/v2rayNG/Clash: <share_link>"(跨客户端通用)
+- `task.status=done` + `proxy_node.status=using` + protocol=socks5(share_link 空) → "配好啦, 节点 VPS_IP:port 账密 user/pwd, 完全可用"
+- `task.status=done` + `proxy_node.status=pending_fw` → "代理已挂上(链接 <share_link>), 但外部进不来, 请登录 VPS 厂商面板放行端口 X"
 - `task.status=failed` + `last_error_code=no_vps_capacity` → "VPS 池子满了, 请加机器或停掉过期 VPS, 然后重新登记这条 IP"
 - `task.status=failed` + `last_error_code=inner_ping_failed` → "代理配上去了但内部不通, 上游 IP 可能已过期"
 - `task.status=in_progress` → "还在配置, 等几分钟再问"
@@ -224,6 +227,16 @@ DB 里新增 last_error_code → 本表新增一行 → 对应工具 description
 #### 6.5 `get_available_proxy_nodes`
 
 (沿用现有 description, 不在本 spec 重列)
+
+返回 list[dict], 每条字段(ADR-0011 §8 加 `method` + `share_link`):
+{proxy_id, vps_id, ip_id, protocol("shadowsocks"新部署/"socks5"存量),
+ method(SS 加密方式, socks5 节点留空), host, port, username, password,
+ share_link(SS 标准 ss:// 链接, socks5 节点留空), egress_ip,
+ country_code, country_name, city}。
+
+交付优先用 share_link: shadowsocks 节点的 share_link 是标准 ss:// 链接(SIP002),
+直接发用户复制粘贴/扫码导入小火箭/v2rayNG/Clash, 跨客户端通用; socks5 存量节点
+share_link 为空, 只能整理成手动填写格式(类型/IP/端口/账号/密码), 不要伪造 ss:// 链接。
 
 #### 6.6 `update_ip_expire_date`
 
@@ -352,3 +365,4 @@ MCP 工具层是**对外协议适配层**, 本身就是"工具"的暴露, 不再
 - v2.1 2026-06-13 订正「工具数量不写死为不变量」(同源 CLAUDE.md §8 反模式): §1 标题去固定数字 / §8 不变量 #6 改「工具数量不是不变量, 加工具不开 ADR、不 assert 总数」(对齐 CLAUDE.local §14.5)
 - v3 2026-06-14 加 `get_registered_ips`(列全量已登记 IP, 补「批量补到期日拿 ip_id」缺口): §1 总账 +1 行 / 新增 §6.7
 - v4 2026-06-14 加 `get_registered_vps`(列全量已登记 VPS, 看池子+拿 vps_id): §1 总账 +1 行 / 新增 §6.8
+- v5 2026-06-24 MCP 节点返回加 `method` + `share_link`(ADR-0011 §8, T-29, 不增工具只加字段): §6.4 proxy_node 形状 + §6.5 get_available_proxy_nodes 返回字段补 method/share_link, 转告话术改"优先用 ss:// share_link"(shadowsocks 节点); socks5 存量节点 share_link 留空, 走手动填写, 不伪造 ss://
