@@ -125,6 +125,17 @@ grep 证实活跃码零 import(只 services 内部互引)。`ip_register` 的旧
 
 ---
 
+## 补充(2026-06-24, runner 跨库修正)
+
+§决策 §5 原写 0001 probe 用 SQLite 专用 `PRAGMA table_info`、baseline 用 `sqlite_master`。
+review 指出 `db/engine.py` + `config.py` **预留 MySQL**(生产, 注释"生产改 mysql"), runner
+不该 SQLite 专用(切 MySQL 时 sqlite_master/PRAGMA 会炸)。
+
+**修正**: `_table_exists` / `_column_exists` 改用 SQLAlchemy `inspect`(has_table /
+get_columns)**跨库 API**, runner 同时支持 sqlite + mysql。0001 的 ALTER ADD COLUMN SQL
+本身跨库兼容, 不改。(切 MySQL 另需装 pymysql + 改 `DB_TYPE`, 属部署关注点。
+ADR-0010 "生产 SQLite" 与 config 注释 "生产 mysql" 的矛盾待用户后续澄清。)
+
 ## 影响清单(已读代码现状, 已锁定)
 
 | 文件 | 改动 | task |

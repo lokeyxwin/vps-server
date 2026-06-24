@@ -26,7 +26,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
 from log import get_logger
@@ -100,23 +100,20 @@ def _discover_migrations() -> list[tuple[str, Path]]:
 
 
 def _column_exists(conn, table: str, column: str) -> bool:
-    """PRAGMA table_info 检测某表是否已有某列 (SQLite)。"""
-    rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
-    # PRAGMA table_info 第二列 (index 1) 是列名
-    return any(row[1] == column for row in rows)
+    """SQLAlchemy inspect 检测某表是否已有某列 (跨库: sqlite / mysql)。
+
+    用 inspect 通用 API 而非 SQLite 专用 PRAGMA, 让 runner 在 mysql 生产库也能跑。
+    表不存在时返 False(不抛)。
+    """
+    insp = inspect(conn)
+    if not insp.has_table(table):
+        return False
+    return any(col["name"] == column for col in insp.get_columns(table))
 
 
 def _table_exists(engine: Engine, table: str) -> bool:
-    """sqlite_master 检测业务表是否已存在 (SQLite)。"""
-    with engine.connect() as conn:
-        row = conn.execute(
-            text(
-                "SELECT name FROM sqlite_master "
-                "WHERE type='table' AND name=:n"
-            ),
-            {"n": table},
-        ).fetchone()
-    return row is not None
+    """SQLAlchemy inspect 检测业务表是否已存在 (跨库: sqlite / mysql)。"""
+    return inspect(engine).has_table(table)
 
 
 def apply_pending(engine: Engine) -> dict:

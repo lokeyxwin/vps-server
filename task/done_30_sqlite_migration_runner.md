@@ -104,6 +104,6 @@ PYTHONPATH=. uv run pytest test/ -q   # 全量(确认没破坏 + 新 TC 全过)
   code-reviewer adversarial: 0 CRITICAL / 0 HIGH / 1 MEDIUM(已修) / 4 LOW
 未覆盖风险:
   - LOW-1 SQLite DDL 非原子(ALTER 自动提交), 但 0001 probe 重试自愈
-  - LOW-2 _column_exists f-string 拼表名(table 来自硬编码字典, 无注入风险)
-  - runner 是 SQLite 专用(PRAGMA/sqlite_master), 符合 ADR-0010 生产 SQLite
+  - runner 已改 SQLAlchemy inspect 跨库(sqlite+mysql, ADR-0012 §补充, review 揪出);
+    MySQL 真验等生产环境(dev 无 MySQL, 跨库靠 SQLAlchemy inspect 抽象保证)
 ```
