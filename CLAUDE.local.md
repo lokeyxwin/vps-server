@@ -34,8 +34,8 @@ VPS 模块已闭环。**IP 业务是接下来的工作**（流程 + 实现见 [t
 ## §0 适用范围（2026-06-06 追加）
 
 **本节（§0）以下到 §反模式禁令 为止，都是"原项目 services/ 同步阻塞业务函数"
-时代的规则，统称 legacy 规则**。它们仍约束 `services/vps_register.py` /
-`services/ip_register.py` / `services/vps_init.py` 等旧代码作为对照参考。
+时代的规则，统称 legacy 规则**。ADR-0012 / T-31 已删除 `services/`，这些规则
+不再约束现有代码；仅作为历史背景和反模式参考。
 
 **新代码全部按本文末尾 §业务编排：worker / kit / task 体系 走**，不再遵循 legacy 规则。
 
@@ -43,10 +43,9 @@ VPS 模块已闭环。**IP 业务是接下来的工作**（流程 + 实现见 [t
 
 | legacy 位置 | 怎么用 | 绝不 |
 |------------|--------|------|
-| `services/`（旧业务编排层） | 打开看思路、必要时 cp 片段到 `workers/` | **`from services import` 直接导入** |
-| `xray/service.py` + `xray/config.py`（旧函数） | 打开看实现思路 | **`from xray.service/config import` 直接导入**——新方法全部直接写在 `xray/manager.py::XrayManager` 类里 |
+| `xray/service.py` + `xray/config.py`（旧函数，仍在） | 打开看实现思路 | **`from xray.service/config import` 直接导入**——新方法全部直接写在 `xray/manager.py::XrayManager` 类里 |
 
-新代码 + 真机验证完工后，旧 `services/` 整体删除，本节也随之失效。
+`services/` 已删（ADR-0012 / T-31）；`xray/service.py + config.py` 内联另案评估，处理完本节随之失效。
 
 ---
 
@@ -252,11 +251,13 @@ xxx_status_message: str       # 人类可读的状态附加信息
 
 **服务器是真相，DB 是它的影子**。每次业务先看实际状态再决定动作（参考 `XrayManager.ensure_installed_and_running`）。
 
-### Dev DB 迁移
+### DB 迁移（migration runner，见 ADR-0012）
 
-dev SQLite 加字段：`ALTER TABLE ADD COLUMN ... DEFAULT 0`
-dev SQLite 加表：`Base.metadata.create_all(engine, tables=[X.__table__])`
-dev SQLite 改结构：让用户手动 `DROP TABLE` 再 create_all（钩子会拦自动 drop）
+有轻量 runner（`db/migrate.py` + `db/migrations/NNNN_*.sql` + schema_migrations 台账）。
+- 加字段/改结构 = 改 `db/models.py` + 加一个 `db/migrations/NNNN_<slug>.sql`（每文件一条语句）
+- 全新库（首次部署 / dev 重建）：`python main.py init-db`（create_all 最新 schema + baseline 现有迁移）
+- 已有库（生产，有数据）：`python main.py migrate`（跑未应用迁移，保数据演化）
+- dev 想重置：删本地 dev SQLite 文件 + `init-db`；生产只跑 `migrate`
 
 ---
 
@@ -407,7 +408,6 @@ core/                       ← 通用底层(已有,不动)
 
 test/<worker>/spec.md  ← 行为规约(验收标准金标准,single source of truth)
 tools/                      ← MCP 协议适配层(已存在,不变)
-services/                   ← 旧业务层,保留作对照,新代码不 import
 proxy/  db/                 ← 不动
 ```
 
@@ -566,12 +566,11 @@ PROBE_VPS = {
 - **绝不暴露**:内部子动作（"先连 SSH"、"先装 xray"、"开个端口"）——
   这些是工人内部步骤，不给 agent
 
-## 11. 旧 services/ 的处理
+## 11. 旧 services/ 的处理（已删，ADR-0012 / T-31）
 
-- **不删** —— 留作对照参考
-- 新代码**不 import** `services/`
-- 旧 services/ 里的"业务函数返回 dict 同步阻塞"那套约定（前面 §业务函数契约 节）
-  仍约束旧代码，新代码按本节走
+- **已删除** —— grep 证实零活跃 import 后整个 `services/` 删掉
+- 前面 §业务函数契约 等 legacy 规则不再有对应代码，仅作历史阅读（git 可查）
+- 新代码按 worker / kit / task 体系走（本节后续）
 
 ## 12. 纳管模式（见 ADR-0002）
 
@@ -618,11 +617,10 @@ main.py worker-loop      后端常驻调度      扫 task 表 + 推 worker（异
 - 文件层面**不强制只读** — 权限隔离靠 §14.1 MCP admin/user 分层
 - 任何 SQL（SELECT / INSERT / UPDATE / DELETE）住 `db/queries.py`，handler 不写 SQL
 
-### `services/` 边界（终态）
+### `services/` 边界（已删，ADR-0012）
 
-- T-18 起 **`services/` 退出活跃路径**：没有任何 worker / tools / db 在 import `services/`
-- 旧 `services/vps_register.py` / `vps_init.py` / `ip_register.py` 等保留作对照，不删不增
-- 替换上面 §11 旧 services/ 的处理 规则的"新代码不 import services/"软规则 → 现在是硬事实（grep 验证）
+- T-18 起退出活跃路径（零活跃 import）；T-31（ADR-0012）整个 `services/` **已删除**
+- 守护测试 `test/db/TC-02/03/04` 断言 services/ 不存在 + 零活跃 import，防回归
 
 ## 14. MCP 工具上线评估清单 + 写入工具白名单 patch 4 条硬规则（见 ADR-0008 §3）
 
