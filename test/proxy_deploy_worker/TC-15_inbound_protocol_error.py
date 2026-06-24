@@ -1,16 +1,20 @@
 """
 ========================================================================
-TC-08 半成功: 内通 + 外不通 → done + pending_fw (spec §3 步骤 5b, §6, §8)
+TC-15 非法 inbound protocol → failed(apply_binding_failed) 不重试
+(ADR-0011 方案 A; review LOW#2)
 
 故事:
-  内 ping 通(代理本身配好了) 但外 ping 不通(云厂商安全策略组没放行)
-  → 不算工人失败, 走 done 路径
-  → proxy_record.status = pending_fw (等用户去面板放行)
-  → vps.used_port_count 仍 +1 (端口实际占了)
-  → vps.stage 仍释放回 connectable
-  → ip_task.status = done
+  add_proxy_binding 收到未识别的对外 inbound protocol → 抛 InboundProtocolError。
+  这是配置错(不是网络抖动) → 应归 _APPLY_BINDING_ERRORS → failed(apply_binding_failed) 终态,
+  绝不能泡到外层 except Exception → retriable 被当网络抖动重试。
 
-边界(spec §8): 外部安全组不归本工人管.
+测试:
+  TC-15-a process_task 返回 status=failed + last_error_code='apply_binding_failed'
+          (而不是 retriable / ssh_disconnected)
+  TC-15-b ip_task 落 FAILED 终态 + last_error_code='apply_binding_failed'
+          + last_error_msg 含 'InboundProtocolError'
+  TC-15-c vps.stage 保持 running (失败不释放)
+  TC-15-d 无 proxy_record 写入
 ========================================================================
 """
 
@@ -19,8 +23,9 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock, patch
 
-from db.models import IPTask, ProxyRecord, ProxyStatus, TaskStatus, VPSRecord, VPSStage
+from db.models import IPTask, ProxyRecord, TaskStatus, VPSRecord, VPSStage
 from workers.proxy_deploy_worker import ProxyDeployWorker
+from xray.config import InboundProtocolError
 
 from ._helpers import (
     insert_ip,
@@ -33,12 +38,15 @@ from ._helpers import (
 )
 
 
-class TestPendingFw(unittest.TestCase):
+class TestInboundProtocolError(unittest.TestCase):
     def setUp(self):
         self.engine, self.Session = make_in_memory_engine()
 
         self.fake_xm = MagicMock()
-        self.fake_xm.apply_proxy_binding.return_value = {"_baked": "cfg"}
+        # apply 阶段抛 InboundProtocolError (模拟非法 protocol 透传到 add_proxy_binding)
+        self.fake_xm.apply_proxy_binding.side_effect = InboundProtocolError(
+            "fake unsupported inbound protocol 'vmess'"
+        )
 
         self._patches = [
             patch(
@@ -61,10 +69,10 @@ class TestPendingFw(unittest.TestCase):
                 "workers.proxy_deploy_worker.firewall.open_tcp_port_range",
                 return_value="firewalld",
             ),
-            # SS 内 ping 通 + 外 ping 不通 (安全组未放行 → pending_fw)
+            # apply 先抛错, probes 走不到; 留默认即可
             patch(
                 "workers.proxy_deploy_worker.ShadowsocksProbe",
-                make_fake_ss_probe_cls(inner_ok=True, outer_ok=False),
+                make_fake_ss_probe_cls(inner_ok=True, outer_ok=True),
             ),
         ]
         for p in self._patches:
@@ -77,7 +85,6 @@ class TestPendingFw(unittest.TestCase):
             s.commit()
             self.task_id = self.task.id
             self.vps_id = self.vps.id
-            self.ip_id = self.ip.id
 
         self.worker = ProxyDeployWorker()
         self.result = self.worker.process_task(self.task_id)
@@ -87,31 +94,25 @@ class TestPendingFw(unittest.TestCase):
             p.stop()
         self.engine.dispose()
 
-    def test_tc08a_returns_done_outer_false(self):
-        self.assertEqual(self.result["status"], "done")
-        self.assertFalse(self.result["outer_ping_ok"])
+    def test_tc15a_returns_failed_apply_binding_not_retriable(self):
+        self.assertEqual(self.result["status"], "failed")
+        self.assertEqual(self.result["last_error_code"], "apply_binding_failed")
 
-    def test_tc08b_proxy_status_pending_fw(self):
-        with self.Session() as s:
-            p = s.query(ProxyRecord).first()
-            self.assertEqual(p.status, ProxyStatus.PENDING_FW)
-
-    def test_tc08c_used_port_count_still_plus_one(self):
-        """半成功端口实际占了, used_port_count 也要 +1."""
-        with self.Session() as s:
-            vps = s.get(VPSRecord, self.vps_id)
-            self.assertEqual(vps.used_port_count, 1)
-
-    def test_tc08d_vps_stage_released(self):
-        """半成功仍算工人完工, vps.stage 释放回 connectable."""
-        with self.Session() as s:
-            vps = s.get(VPSRecord, self.vps_id)
-            self.assertEqual(vps.stage, VPSStage.CONNECTABLE)
-
-    def test_tc08e_task_status_done_not_failed(self):
+    def test_tc15b_task_failed_terminal_with_detail(self):
         with self.Session() as s:
             t = s.get(IPTask, self.task_id)
-            self.assertEqual(t.status, TaskStatus.DONE)
+            self.assertEqual(t.status, TaskStatus.FAILED)
+            self.assertEqual(t.last_error_code, "apply_binding_failed")
+            self.assertIn("InboundProtocolError", t.last_error_msg)
+
+    def test_tc15c_vps_stage_remains_running(self):
+        with self.Session() as s:
+            vps = s.get(VPSRecord, self.vps_id)
+            self.assertEqual(vps.stage, VPSStage.RUNNING)
+
+    def test_tc15d_no_proxy_record_inserted(self):
+        with self.Session() as s:
+            self.assertEqual(s.query(ProxyRecord).count(), 0)
 
 
 if __name__ == "__main__":

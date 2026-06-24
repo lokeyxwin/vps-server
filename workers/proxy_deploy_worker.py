@@ -1,9 +1,13 @@
-"""ProxyDeployWorker —— 把已登记的上游 IP 挂到生产 VPS 当 socks5 outbound (spec v1).
+"""ProxyDeployWorker —— 把已登记的上游 IP 挂到生产 VPS, 对外开 Shadowsocks 入口.
 
 干啥:
   扫 ip_task 抢一条 → 挑机(同事务抢 vps.stage 资源锁 + 回填 task.vps_id)
-  → SSH 进 VPS → 挑端口(排除清单 + 高位随机) → 配上线 + 防火墙放行
-  → 内 ping + 外 ping → 同事务一次写: proxy_record / ip / vps / task.
+  → SSH 进 VPS → 挑端口(排除清单 + 高位随机) → 配上线(对外 SS inbound + 上游
+  socks5 outbound) + 防火墙放行 → 内 ping + 外 ping → 同事务一次写:
+  proxy_record / ip / vps / task.
+
+对外协议 = Shadowsocks(ADR-0011): 跨客户端 SIP002 ss:// 标准分享; 上游 outbound
+仍 socks5(连上游跳板, 不动).
 
 谁会调我:
   - 主进程后台轮询: while True: ProxyDeployWorker().run_once() or sleep
@@ -11,14 +15,14 @@
 
 我用到的工具:
   - VPSSession                    (SSH 会话)
-  - XrayManager                   (xray 工具箱)
-  - xc.build_proxy_outbound       (拼上游 outbound dict)
+  - XrayManager                   (xray 工具箱, apply_proxy_binding 走 SS)
+  - xc.build_proxy_outbound       (拼上游 outbound dict, 仍 socks5)
   - toolbox.firewall              (本机防火墙开端口)
   - toolbox.ports                 (查已用端口 + 推算可用端口)
-  - toolbox.proxy_check           (内/外 ping)
+  - toolbox.proxy_check.ShadowsocksProbe (内/外 ping SS)
 
 行为规约金标准:
-  test/proxy_deploy_worker/spec.md v1
+  test/proxy_deploy_worker/spec.md
 """
 
 from __future__ import annotations
@@ -34,6 +38,7 @@ import config as app_config
 from db.models import (
     IPRecord,
     IPTask,
+    ProxyProtocol,
     ProxyRecord,
     ProxyStatus,
     TaskStatus,
@@ -54,7 +59,7 @@ from toolbox.ports import (
     compute_available_ports,
     get_used_ports,
 )
-from toolbox.proxy_check import test_external, test_internal
+from toolbox.proxy_check import ShadowsocksProbe
 from xray import config as xc
 from xray.manager import XrayManager
 from xray.service import ReloadFailedError
@@ -75,10 +80,13 @@ RETRY_BACKOFF_CAP_MINUTES = 60
 
 
 # apply 阶段可能抛的全套 xray 异常(无论 add / upload / validate / reload)
+# InboundProtocolError 也归这里: 非法 protocol 是配置错(不是网络抖动), 应直接
+# failed(apply_binding_failed) 终态, 不能泡到外层 except 被当成 retriable 重试。
 _APPLY_BINDING_ERRORS = (
     xc.PortConflictError,
     xc.PortAlreadyBoundError,
     xc.OutboundTagConflictError,
+    xc.InboundProtocolError,
     xc.ConfigWriteError,
     xc.ConfigValidationError,
     xc.ConfigReadError,
@@ -91,7 +99,7 @@ _APPLY_BINDING_ERRORS = (
 # ============================================================
 
 class ProxyDeployWorker:
-    """把已登记的上游 IP 挂到生产 VPS 当 socks5 outbound 的工人."""
+    """把已登记的上游 IP 挂到生产 VPS, 对外开 Shadowsocks 入口的工人 (ADR-0011)."""
 
     def __init__(self, worker_id: str | None = None) -> None:
         self._worker_id = worker_id or f"proxy_deploy_worker_pid{os.getpid()}"
@@ -179,8 +187,8 @@ class ProxyDeployWorker:
                     vps_id=vps_id,
                     vps_port=vps_port,
                     ip_id=creds["ip_id"],
-                    inbound_user=deploy["inbound_user"],
-                    inbound_pwd=deploy["inbound_pwd"],
+                    method=deploy["method"],
+                    password=deploy["password"],
                     upstream_host=creds["entry_host"],
                     egress_ip=creds["egress_ip"],
                     egress_country=creds["country_code"],
@@ -395,20 +403,21 @@ class ProxyDeployWorker:
         vps_port: int,
         creds: dict,
     ) -> dict:
-        """配上线 + 防火墙 + 内 ping + 外 ping.
+        """配上线(对外 SS inbound) + 防火墙 + 内 ping + 外 ping (ADR-0011).
 
         返回:
           {"status": "success", "outer_ping_ok": bool,
-           "inbound_user": str, "inbound_pwd": str}
+           "method": str, "password": str}
           {"status": "failed", "last_error_code": str, "last_error_msg": str}
 
         失败时本方法内部已 rollback 三件套, 调用方不再处理 xray 状态.
         """
-        # inbound 账密生成 (需求窗口拍板 2026-06-09, b 方案):
-        #   user = "proxy_<ip_id>"  ; pwd = uuid4().hex (32 字符)
-        inbound_user = f"proxy_{creds['ip_id']}"
-        inbound_pwd = uuid4().hex
+        # SS inbound 凭据 (ADR-0011 §决策 §2):
+        #   SS 无 username; password = uuid4().hex (32 字符随机); method = 全局加密方式
+        method = app_config.SS_METHOD
+        password = uuid4().hex
 
+        # 上游 outbound 不动: 仍 socks5 (连上游跳板, 跟对外协议无关)
         proxy_outbound = xc.build_proxy_outbound(
             host=creds["entry_host"],
             port=creds["entry_port"],
@@ -419,12 +428,13 @@ class ProxyDeployWorker:
         )
 
         xm = XrayManager(client)
+        ss_probe = ShadowsocksProbe()
         last_config: dict | None = None
 
-        # 步骤 4a: xray apply 三件套
+        # 步骤 4a: xray apply 三件套 (对外 SS inbound + 上游 socks5 outbound + 路由)
         try:
             last_config = xm.apply_proxy_binding(
-                vps_port, proxy_outbound, inbound_user, inbound_pwd,
+                vps_port, proxy_outbound, method, password,
             )
         except _APPLY_BINDING_ERRORS as exc:
             logger.warning(
@@ -454,12 +464,12 @@ class ProxyDeployWorker:
                 "last_error_msg": str(exc),
             }
 
-        # 步骤 5a: 内 ping (在 VPS 本机走 127.0.0.1:vps_port)
-        inner_ok, _egress_from_inner = test_internal(
+        # 步骤 5a: 内 ping (VPS 本机起临时 xray 端到端验 SS, ADR-0011 §决策 §5)
+        inner_ok, _egress_from_inner = ss_probe.test_internal(
             client=client,
             port=vps_port,
-            user=inbound_user,
-            pwd=inbound_pwd,
+            method=method,
+            password=password,
         )
         if not inner_ok:
             logger.warning(
@@ -473,20 +483,18 @@ class ProxyDeployWorker:
                 "last_error_msg": f"内 ping vps_port={vps_port} 不通, 已 rollback",
             }
 
-        # 步骤 5b: 外 ping (本机 worker → VPS_IP:vps_port)
+        # 步骤 5b: 外 ping (本机 worker → VPS_IP:vps_port, TCP 可达测, ADR-0011 §决策 §5)
         # 不通不算失败 (spec §8: 外部安全策略组不归本工人管), 走 pending_fw 状态
-        outer_ok = test_external(
+        outer_ok = ss_probe.test_external(
             host=vps_ip,
             port=vps_port,
-            user=inbound_user,
-            pwd=inbound_pwd,
         )
 
         return {
             "status": "success",
             "outer_ping_ok": outer_ok,
-            "inbound_user": inbound_user,
-            "inbound_pwd": inbound_pwd,
+            "method": method,
+            "password": password,
         }
 
     @staticmethod
@@ -515,8 +523,8 @@ class ProxyDeployWorker:
         vps_id: int,
         vps_port: int,
         ip_id: int,
-        inbound_user: str,
-        inbound_pwd: str,
+        method: str,
+        password: str,
         upstream_host: str,
         egress_ip: str,
         egress_country: str,
@@ -524,22 +532,25 @@ class ProxyDeployWorker:
     ) -> None:
         """成功收尾: 同事务一次写 proxy_record / vps / task (spec §6).
 
-        - proxy_record: INSERT 新行, status = using 或 pending_fw
+        - proxy_record: INSERT 新行 (protocol=shadowsocks + method), status = using 或 pending_fw
         - vps: used_port_count +1, stage='running' → 'connectable' (释放资源锁)
         - ip_task: in_progress → done
         """
         now = datetime.now()
         with session_scope() as s:
+            # 对外节点 = Shadowsocks (ADR-0011): SS 无 user, password 落 inbound_pwd 槽,
+            # method 单存; protocol 显式标 shadowsocks
             proxy = ProxyRecord.from_new_deployment(
                 vps_id=vps_id,
                 vps_port=vps_port,
                 ip_id=ip_id,
-                inbound_user=inbound_user,
-                inbound_pwd=inbound_pwd,
+                inbound_user="",
+                inbound_pwd=password,
                 upstream_host=upstream_host,
                 egress_ip=egress_ip,
                 egress_country=egress_country,
-                protocol="socks5",
+                protocol=ProxyProtocol.SHADOWSOCKS,
+                method=method,
             )
             proxy.status = ProxyStatus.USING if outer_ping_ok else ProxyStatus.PENDING_FW
             s.add(proxy)

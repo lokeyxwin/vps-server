@@ -96,6 +96,10 @@ XRAY_DEFAULT_PORT = 18440
 # 真实负载下不够直接调这一个常量, worker 代码不动。
 MAX_PORTS_PER_VPS = 3
 
+# 对外客户端 SS inbound 加密方式（ADR-0011 §决策 §2）。
+# aes-256-gcm 兼容性最好（所有现代 SS 客户端都支持），不需要域名 / 证书 / TLS。
+SS_METHOD = "aes-256-gcm"
+
 # 注：ADR-0006 §6 提到的"EXCLUDED_PORTS"概念已经在
 # `toolbox/ports.py::COMMON_RESERVED_PORTS` 实现, 不在这里另起常量
 # 避免双轨（CLAUDE.local.md §反模式）。

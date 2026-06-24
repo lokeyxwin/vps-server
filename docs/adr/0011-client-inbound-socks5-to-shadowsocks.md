@@ -190,13 +190,25 @@ SS2022 老客户端支持差, 跟"最大兼容"目标冲突, 排除。
 
 ---
 
+## 补充(2026-06-24, T-27 实现前发现并修正)
+
+下面 §影响清单原把 `add_proxy_binding` 当作只服务对外部署, **漏看它是 socks5/SS 共享底层**:
+
+- `apply_proxy_binding → add_proxy_binding`: 服务 ProxyDeployWorker 对外部署 → 走 SS
+- `replace_proxy_binding → add_proxy_binding`: 服务 IPProbeWorker 测上游(本 ADR §7) → 必须保持 socks5
+
+**处理(用户 2026-06-24 拍板, 方案 A, 决策不变, 只补实现路径)**:
+`add_proxy_binding` 加 `protocol` 参数(默认 `socks5`), 按协议造 socks5(user/pwd) 或
+SS(method/password) inbound。`apply_proxy_binding` 传 `shadowsocks`;
+`replace_proxy_binding` 保持默认 socks5。**IPProbeWorker / 纳管一行不碰**, 符合 §7。
+
 ## 影响清单(已读代码现状, 已锁定, 下游 task 落地)
 
 | 文件 | 现状 | 改动 | 批次/task |
 |------|------|------|----------|
 | `db/models.py` | `ProxyRecord.protocol` String default socks5; 无 method; `from_new_deployment`(L261) protocol 参数 | 加 `ProxyProtocol` 常量类 + `method` 字段 + `from_new_deployment` 加 method 参数 | 批1 / T-26 |
-| `xray/config.py` | `add_proxy_binding`(L491) + `build_proxy_relay_config`(L299) client_inbound 是 socks+accounts | 改 shadowsocks(method/password); 抽 `_build_ss_inbound` 避免两处重复 | 批2 / T-27 |
-| `xray/manager.py` | `apply_proxy_binding`(L242)/`replace_proxy_binding`(L281) 收 inbound_user/pwd | 签名改支持 method/password | 批2 / T-27 |
+| `xray/config.py` | `add_proxy_binding`(L491) socks5/SS 共享底层 | 加 `protocol` 参数(默认 socks5)按协议造 inbound; 抽 `_build_ss_inbound`; build_proxy_relay_config 无活跃调用方 | 批2 / T-27 |
+| `xray/manager.py` | `apply_proxy_binding`(L242) 对外部署 / `replace_proxy_binding`(L281) 测上游 | apply 改走 SS(protocol=shadowsocks + method/password); **replace 保持 socks5 不变**(IPProbeWorker 零碰) | 批2 / T-27 |
 | `workers/proxy_deploy_worker.py` | L409 凭据 / L426 apply / L458 内 L478 外 ping(socks5) / L542 protocol="socks5" | 凭据改 SS; ping 改 ShadowsocksProbe; `_mark_done` 写 protocol/method | 批2 / T-27 |
 | `toolbox/proxy_check.py` | 三函数 test_socks_proxy / test_internal / test_external | 封 `Socks5Probe` 类(行为不变) + 新增 `ShadowsocksProbe` 类 | 批3 / T-28 |
 | `workers/ip_probe_worker.py` | L55/L457 调 test_internal_socks 测上游 | 改调 `Socks5Probe`(行为不变, 换调用形态) | 批3 / T-28 |

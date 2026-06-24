@@ -25,6 +25,7 @@ from ._helpers import (
     insert_ip_task,
     insert_vps,
     make_fake_session_scope,
+    make_fake_ss_probe_cls,
     make_fake_vps_session_cls,
     make_in_memory_engine,
 )
@@ -60,13 +61,10 @@ class TestApplyFailed(unittest.TestCase):
                 "workers.proxy_deploy_worker.firewall.open_tcp_port_range",
                 return_value="firewalld",
             ),
+            # apply 先抛错, probes 走不到; 留默认即可
             patch(
-                "workers.proxy_deploy_worker.test_internal",
-                return_value=(True, "203.0.113.42"),
-            ),
-            patch(
-                "workers.proxy_deploy_worker.test_external",
-                return_value=True,
+                "workers.proxy_deploy_worker.ShadowsocksProbe",
+                make_fake_ss_probe_cls(inner_ok=True, outer_ok=True),
             ),
         ]
         for p in self._patches:

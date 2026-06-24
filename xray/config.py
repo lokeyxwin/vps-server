@@ -47,6 +47,14 @@ PROTOCOL_HTTP = "http"
 # 业务层入参校验时用这个集合；扩展协议在此注册
 SUPPORTED_PROTOCOLS = (PROTOCOL_SOCKS5, PROTOCOL_HTTP)
 
+# 对外客户端 inbound 协议（ADR-0011 §决策 §1）。
+# 跟上面的 PROTOCOL_*（描述上游 outbound 协议）不是一回事：
+#   - 上游 outbound 仍 socks5/http（连上游跳板，build_proxy_outbound 用）
+#   - 对外 inbound 新部署是 shadowsocks（add_proxy_binding 的 protocol 参数选）
+# 取值跟 db.models.ProxyProtocol 同字面值（socks5 / shadowsocks），各层不互相 import。
+INBOUND_PROTOCOL_SOCKS5 = "socks5"
+INBOUND_PROTOCOL_SHADOWSOCKS = "shadowsocks"
+
 # xray config.json 里的 protocol 字段跟我们用户层略不同：
 # 对外讲 "socks5"，xray 里写 "socks"。集中映射避免业务层硬编码。
 _XRAY_PROTOCOL_NAME = {
@@ -75,6 +83,12 @@ UNSUPPORTED_PROTOCOL_MESSAGE = (
     "不支持的代理协议。当前仅支持 socks5 / http；"
     "如需扩展，请在 xray.config.SUPPORTED_PROTOCOLS 注册新值，"
     "并在 _XRAY_PROTOCOL_NAME 补充映射。"
+)
+
+UNSUPPORTED_INBOUND_PROTOCOL_MESSAGE = (
+    "不支持的对外 inbound 协议。当前仅支持 socks5 / shadowsocks；"
+    "socks5 走 (inbound_user, inbound_pwd) 账密，shadowsocks 走 (method, inbound_pwd)。"
+    "如需扩展，请在 xray.config.add_proxy_binding 的协议分支补充对应 inbound builder。"
 )
 
 PORT_CONFLICTS_WITH_DEFAULT_MESSAGE = (
@@ -123,6 +137,10 @@ class UnsupportedProtocolError(ValueError):
     """传入了 SUPPORTED_PROTOCOLS 之外的协议字符串。"""
 
 
+class InboundProtocolError(ValueError):
+    """add_proxy_binding 传入了 INBOUND_PROTOCOL_* 之外的对外 inbound 协议。"""
+
+
 class PortConflictError(ValueError):
     """客户端入站端口跟 xray 默认直出端口（DEFAULT_PORT）撞了。"""
 
@@ -166,6 +184,46 @@ _DEFAULT_DIRECT_OUTBOUND = {
     "tag": "direct",
     "protocol": "freedom",
 }
+
+
+# ============================================================
+# 内部纯函数：构造对外客户端 inbound（socks5 账密 / shadowsocks 两种）
+# ----- 给 build_proxy_relay_config 和 add_proxy_binding 共用，避免两处重复 -----
+# tag 一律 client-{vps_port}：路由规则按 tag 挂钩，协议换不换都不影响路由拓扑。
+# ============================================================
+
+def _build_socks5_client_inbound(vps_port: int, user: str, pwd: str) -> dict:
+    """账密 socks5 inbound（上游 IP 校验 / 纳管沿用）。"""
+    return {
+        "tag": f"client-{vps_port}",
+        "port": vps_port,
+        "listen": "0.0.0.0",
+        "protocol": "socks",
+        "settings": {
+            "auth": "password",
+            "udp": True,
+            "accounts": [{"user": user, "pass": pwd}],
+        },
+    }
+
+
+def _build_ss_inbound(vps_port: int, method: str, password: str) -> dict:
+    """Shadowsocks inbound（ADR-0011 §决策 §1：新部署对外节点默认 SS）。
+
+    SS 没有 username 概念，只有 method（加密方式）+ password。
+    network=tcp,udp 让 SS 同时承载 TCP / UDP（兼容各客户端默认行为）。
+    """
+    return {
+        "tag": f"client-{vps_port}",
+        "port": vps_port,
+        "listen": "0.0.0.0",
+        "protocol": "shadowsocks",
+        "settings": {
+            "method": method,
+            "password": password,
+            "network": "tcp,udp",
+        },
+    }
 
 
 # ============================================================
@@ -295,18 +353,7 @@ def build_proxy_relay_config(
         )
 
     client_tag = f"client-{vps_port}"
-
-    client_inbound = {
-        "tag": client_tag,
-        "port": vps_port,
-        "listen": "0.0.0.0",
-        "protocol": "socks",
-        "settings": {
-            "auth": "password",
-            "udp": True,
-            "accounts": [{"user": inbound_user, "pass": inbound_pwd}],
-        },
-    }
+    client_inbound = _build_socks5_client_inbound(vps_port, inbound_user, inbound_pwd)
 
     return {
         "log": {"loglevel": "warning"},
@@ -435,6 +482,9 @@ def add_proxy_binding(
     proxy_outbound: dict,
     inbound_user: str,
     inbound_pwd: str,
+    *,
+    protocol: str = INBOUND_PROTOCOL_SOCKS5,
+    method: str = "",
 ) -> dict:
     """往现有 xray config 里追加一组 rgIP binding（不破坏别的 client inbound）。
 
@@ -443,12 +493,19 @@ def add_proxy_binding(
         vps_port       : 18441..18450 之一；== DEFAULT_PORT 抛 PortConflictError
         proxy_outbound : caller 用 build_proxy_outbound() 造好的 outbound dict，
                          应已设好 tag（建议 proxy-{country}-{port}）和 _meta
-        inbound_user / inbound_pwd : 客户端连本机的账密（generate_random_auth 出的）
+        inbound_user / inbound_pwd : 客户端连本机的入站凭据：
+            - protocol=socks5（默认）   : (user, pwd) 账密对（上游校验 / 纳管沿用）
+            - protocol=shadowsocks      : SS 无 user，inbound_pwd 即 SS password，
+                                          关键字透传到 _build_ss_inbound 的 password 形参；
+                                          inbound_user 忽略；method 必填加密方式
+        protocol : 对外 inbound 协议（INBOUND_PROTOCOL_*；默认 socks5 保护测上游链）
+        method   : SS 加密方式（protocol=shadowsocks 时必填，如 aes-256-gcm）
 
     冲突检查（任一命中抛错）：
         - vps_port == DEFAULT_PORT (18440) → PortConflictError
         - 已有 inbound 用 vps_port      → PortAlreadyBoundError
         - 已有 outbound tag 撞 proxy_outbound["tag"] → OutboundTagConflictError
+        - 未识别的 inbound protocol → InboundProtocolError
 
     空 config (`{}` 或缺关键字段) → 先用 build_vps_direct_config 起 baseline 再追加，
     保证服务起步时 default-direct 在场。
@@ -456,6 +513,22 @@ def add_proxy_binding(
     if vps_port == DEFAULT_PORT:
         raise PortConflictError(
             f"{PORT_CONFLICTS_WITH_DEFAULT_MESSAGE} 传入 vps_port={vps_port}"
+        )
+
+    # 先按协议造 client inbound（也顺带校验 protocol 合法），再做后续冲突检查。
+    # 关键字传参: inbound_pwd 在 SS 路径上是 SS password, 显式落到 password 形参,
+    # 不靠位置对应, 避免未来重构 _build_ss_inbound 形参顺序时踩错槽。
+    if protocol == INBOUND_PROTOCOL_SOCKS5:
+        client_inbound = _build_socks5_client_inbound(
+            vps_port, user=inbound_user, pwd=inbound_pwd,
+        )
+    elif protocol == INBOUND_PROTOCOL_SHADOWSOCKS:
+        client_inbound = _build_ss_inbound(
+            vps_port, method=method, password=inbound_pwd,
+        )
+    else:
+        raise InboundProtocolError(
+            f"{UNSUPPORTED_INBOUND_PROTOCOL_MESSAGE} 传入的是: {protocol!r}"
         )
 
     # 空 / 缺关键字段 → 起 baseline；否则深拷贝避免 mutate 入参
@@ -487,19 +560,9 @@ def add_proxy_binding(
                     f"{OUTBOUND_TAG_CONFLICT_MESSAGE} 冲突 tag={new_outbound_tag!r}"
                 )
 
-    # 构造新 client inbound（结构和 build_proxy_relay_config 里一致）
-    client_tag = f"client-{vps_port}"
-    client_inbound = {
-        "tag": client_tag,
-        "port": vps_port,
-        "listen": "0.0.0.0",
-        "protocol": "socks",
-        "settings": {
-            "auth": "password",
-            "udp": True,
-            "accounts": [{"user": inbound_user, "pass": inbound_pwd}],
-        },
-    }
+    # tag 单一真相源: builder 内部已设 client-{vps_port}, 路由直接读它,
+    # 不再独立算一次, 改 tag 规则时只动 builder 一处。
+    client_tag = client_inbound["tag"]
 
     # 三件套 append（用 deepcopy 把 caller 的 proxy_outbound 也隔离，
     # 否则后续 caller 修改它会反映到返回值里）

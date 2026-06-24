@@ -31,6 +31,7 @@ from ._helpers import (
     insert_ip_task,
     insert_vps,
     make_fake_session_scope,
+    make_fake_ss_probe_cls,
     make_fake_vps_session_cls,
     make_in_memory_engine,
 )
@@ -64,14 +65,10 @@ class TestInnerPingRollback(unittest.TestCase):
                 "workers.proxy_deploy_worker.firewall.open_tcp_port_range",
                 return_value="firewalld",
             ),
-            # 内 ping 不通
+            # SS 内 ping 不通 → 触发 rollback (外 ping 不会走到)
             patch(
-                "workers.proxy_deploy_worker.test_internal",
-                return_value=(False, ""),
-            ),
-            patch(
-                "workers.proxy_deploy_worker.test_external",
-                return_value=True,
+                "workers.proxy_deploy_worker.ShadowsocksProbe",
+                make_fake_ss_probe_cls(inner_ok=False, inner_egress="", outer_ok=True),
             ),
         ]
         for p in self._patches:

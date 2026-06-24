@@ -243,31 +243,46 @@ class XrayManager:
         self,
         vps_port: int,
         proxy_outbound: dict,
-        inbound_user: str,
-        inbound_pwd: str,
+        method: str,
+        password: str,
     ) -> dict:
-        """往现有 xray config 增量加一组 binding 三件套并落到服务器上。
+        """往现有 xray config 增量加一组对外 Shadowsocks binding 三件套并落到服务器上。
 
-        编排：read_config → add_proxy_binding → upload_config → validate_config → reload
+        ADR-0011 §决策 §1：ProxyDeployWorker 新部署的对外 inbound 是 SS（不是 socks5）。
+        SS 没有 username，只有 method（加密方式）+ password。
 
-        参数同 xc.add_proxy_binding（透传）。
+        编排：read_config → add_proxy_binding(protocol=shadowsocks) → upload_config
+              → validate_config → reload
+
+        参数：
+            vps_port       : 对外客户端连接端口
+            proxy_outbound : 上游 outbound dict（build_proxy_outbound 造好，仍 socks5）
+            method         : SS 加密方式（如 config.SS_METHOD = aes-256-gcm）
+            password       : SS 密码（部署时随机生成的 uuid4().hex）
+
         返回追加后的完整 config dict —— 业务侧拿这个 dict 备份，失败时配合
         rollback_proxy_binding 撤回。
 
         抛错（透传 atom 层，业务侧负责捕获并转 status）：
             PortConflictError / PortAlreadyBoundError / OutboundTagConflictError
-                ← add 阶段
+            / InboundProtocolError                                                     ← add 阶段
             ConfigWriteError                                                          ← upload 阶段
             ConfigValidationError                                                     ← validate 阶段
             ReloadFailedError                                                         ← reload 阶段
         """
         logger.info(
-            "XrayManager.apply_proxy_binding: vps_port=%s outbound_tag=%s → applying",
+            "XrayManager.apply_proxy_binding: vps_port=%s outbound_tag=%s protocol=shadowsocks → applying",
             vps_port, proxy_outbound.get("tag", "?"),
         )
         current = xc.read_config(self.client)
         new_config = xc.add_proxy_binding(
-            current, vps_port, proxy_outbound, inbound_user, inbound_pwd,
+            current,
+            vps_port,
+            proxy_outbound,
+            inbound_user="",
+            inbound_pwd=password,
+            protocol=xc.INBOUND_PROTOCOL_SHADOWSOCKS,
+            method=method,
         )
         xc.upload_config(self.client, new_config)
         xc.validate_config(self.client)
@@ -296,10 +311,16 @@ class XrayManager:
 
         幂等：如果 vps_port 当前在 config 里不存在（remove 静默 noop），效果等同纯 add。
 
-        参数同 apply_proxy_binding。
+        对外 inbound 协议固定 socks5（账密）—— 给上游 IP 校验 / 纳管用，跟 ADR-0011
+        把对外节点改 SS 的是 apply_proxy_binding，两条链分开。
+
+        参数：
+            vps_port       : 端口
+            proxy_outbound : 上游 outbound dict
+            inbound_user / inbound_pwd : socks5 inbound 账密
         返回追加后的完整 config dict（业务备份用）。
 
-        抛错（同 apply_proxy_binding：透传 atom 错误，业务侧捕获转 status）。
+        抛错（透传 atom 错误，业务侧捕获转 status）。
         """
         logger.info(
             "XrayManager.replace_proxy_binding: vps_port=%s new_outbound_tag=%s → replacing",

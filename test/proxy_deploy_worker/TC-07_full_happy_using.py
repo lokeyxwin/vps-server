@@ -7,15 +7,15 @@ TC-07 全链路 happy path: 内通 + 外通 → done + using (spec §3 §6)
   → 内 ping 通 → 外 ping 通
   → 收尾: 同事务一次写 proxy_record / vps / task 3 表 (ADR-0010 删 ip.status 后)
 
-测试矩阵 (含 inbound 账密 2 个断言, 需求窗口 2026-06-09 拍板):
+测试矩阵 (对外协议 = Shadowsocks, ADR-0011):
   TC-07-a 返回 {"status":"done", task_id, vps_id, vps_port, outer_ping_ok=True}
-  TC-07-b proxy_record INSERT: status=USING, vps_id/vps_port/ip_id 正确
-  TC-07-c proxy_record.inbound_user = "proxy_{ip.id}" ⭐ 账密规则验证
-  TC-07-d proxy_record.inbound_pwd_encrypted: 解密后长度 == 32 (uuid4().hex)
+  TC-07-b proxy_record INSERT: status=USING, vps_id/vps_port/ip_id 正确, protocol=shadowsocks
+  TC-07-c proxy_record.method = aes-256-gcm (config.SS_METHOD) + inbound_user 留空 (SS 无 user)
+  TC-07-d proxy_record.inbound_pwd_encrypted: 解密后长度 == 32 (uuid4().hex SS password)
   TC-07-e proxy_record 存在且 ip_id 指向这条 IP (替代旧 ip.status 断言, ADR-0010)
   TC-07-f vps.used_port_count +1, vps.stage 从 running → connectable (释放)
   TC-07-g ip_task: in_progress → done, last_error_code 清空
-  TC-07-h apply_proxy_binding 被调用一次, rollback 没被调
+  TC-07-h apply_proxy_binding 被调用一次(收 method/password), rollback 没被调
 ========================================================================
 """
 
@@ -24,8 +24,10 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock, patch
 
+import config as app_config
 from db.models import (
     IPTask,
+    ProxyProtocol,
     ProxyRecord,
     ProxyStatus,
     TaskStatus,
@@ -39,6 +41,7 @@ from ._helpers import (
     insert_ip_task,
     insert_vps,
     make_fake_session_scope,
+    make_fake_ss_probe_cls,
     make_fake_vps_session_cls,
     make_in_memory_engine,
 )
@@ -74,15 +77,10 @@ class TestFullHappyUsing(unittest.TestCase):
                 "workers.proxy_deploy_worker.firewall.open_tcp_port_range",
                 return_value="firewalld",
             ),
-            # 内 ping 通
+            # SS 内 ping 通 + 外 ping 通
             patch(
-                "workers.proxy_deploy_worker.test_internal",
-                return_value=(True, "203.0.113.42"),
-            ),
-            # 外 ping 通
-            patch(
-                "workers.proxy_deploy_worker.test_external",
-                return_value=True,
+                "workers.proxy_deploy_worker.ShadowsocksProbe",
+                make_fake_ss_probe_cls(inner_ok=True, outer_ok=True),
             ),
         ]
         for p in self._patches:
@@ -124,18 +122,20 @@ class TestFullHappyUsing(unittest.TestCase):
             self.assertEqual(p.status, ProxyStatus.USING)
             self.assertEqual(p.egress_ip, "2.2.2.2")
             self.assertEqual(p.egress_country, "SG")
-            self.assertEqual(p.protocol, "socks5")
+            self.assertEqual(p.protocol, ProxyProtocol.SHADOWSOCKS)
 
-    # ---------- TC-07-c ⭐ inbound_user 业务命名 ----------
-    def test_tc07c_inbound_user_business_naming(self):
-        """inbound_user = f'proxy_{ip.id}' (2026-06-09 需求拍板)."""
+    # ---------- TC-07-c ⭐ SS method + 无 inbound_user (ADR-0011) ----------
+    def test_tc07c_ss_method_and_no_inbound_user(self):
+        """SS 节点: method=config.SS_METHOD, inbound_user 留空 (SS 无 user)."""
         with self.Session() as s:
             p = s.query(ProxyRecord).first()
-            self.assertEqual(p.inbound_user, f"proxy_{self.ip_id}")
+            self.assertEqual(p.method, app_config.SS_METHOD)
+            self.assertEqual(p.method, "aes-256-gcm")
+            self.assertEqual(p.inbound_user, "")
 
-    # ---------- TC-07-d ⭐ inbound_pwd 长度 32 (uuid4.hex) ----------
+    # ---------- TC-07-d ⭐ SS password 长度 32 (uuid4.hex) ----------
     def test_tc07d_inbound_pwd_uuid4_hex_length(self):
-        """inbound_pwd = uuid4().hex → 解密后必须 32 字符."""
+        """SS password = uuid4().hex → 解密后必须 32 字符 (落 inbound_pwd 槽)."""
         with self.Session() as s:
             p = s.query(ProxyRecord).first()
             pwd = p.get_inbound_pwd()
@@ -176,6 +176,17 @@ class TestFullHappyUsing(unittest.TestCase):
     def test_tc07h_apply_called_rollback_not(self):
         self.fake_xm.apply_proxy_binding.assert_called_once()
         self.fake_xm.rollback_proxy_binding.assert_not_called()
+
+    # ---------- TC-07-i ⭐ apply 收到 SS method/password (ADR-0011) ----------
+    def test_tc07i_apply_called_with_method_password(self):
+        """apply_proxy_binding(vps_port, outbound, method, password): 第 3 参=method, 第 4=password."""
+        args, kwargs = self.fake_xm.apply_proxy_binding.call_args
+        # 兼容位置/关键字两种传法
+        method = kwargs.get("method", args[2] if len(args) > 2 else None)
+        password = kwargs.get("password", args[3] if len(args) > 3 else None)
+        self.assertEqual(method, app_config.SS_METHOD)
+        self.assertIsNotNone(password)
+        self.assertEqual(len(password), 32)
 
 
 if __name__ == "__main__":

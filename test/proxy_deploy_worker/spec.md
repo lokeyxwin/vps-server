@@ -1,6 +1,6 @@
 # ProxyDeployWorker 行为规约（spec.md）
 
-**版本**: v1.2（2026-06-10）
+**版本**: v1.3（2026-06-24）
 **模块**: `workers/proxy_deploy_worker.py`
 **类型**: 异步 task 工人
 **对应 ADR**:
@@ -8,6 +8,7 @@
 - `docs/adr/0002-takeover-mode-handled-by-xray-worker.md` §3（端口排除清单 + 高位随机）
 - `docs/adr/0005-vps-stage-as-resource-lock.md`（vps.stage 资源锁, task 是并发锁, 两层分离）
 - `docs/adr/0006-proxy-deploy-worker.md`（**本 spec 主依据**: 挑机 / 端口 / 收尾 / status 三档）
+- `docs/adr/0011-client-inbound-socks5-to-shadowsocks.md`（**对外协议改 SS** + 两套 ping 验证）
 
 ---
 
@@ -15,7 +16,7 @@
 
 ### 1. 工人定位
 
-ProxyDeployWorker 是把已登记的上游 IP **真正挂到一台生产 VPS 上**对外开 socks5 入口的工人。
+ProxyDeployWorker 是把已登记的上游 IP **真正挂到一台生产 VPS 上**对外开 **Shadowsocks** 入口的工人（ADR-0011：跨客户端 SIP002 ss:// 标准分享；上游 outbound 仍 socks5，不动）。
 
 - 异步消费 `ip_task`（IPProbeWorker 同步段验证 IP 通过后建 pending）
 - **抢到 task → 立刻挑 VPS → 同事务把 `vps.stage` 标 `running`**（占资源锁, ADR-0005 §1）
@@ -63,18 +64,21 @@ UPDATE ip_task
    ├─ 找到 → 继续
    └─ 候选池空 → 任务 failed + last_error_code='no_port_available'（终态, 不重试）
    ↓
-步骤 4: 配上线
-   - XrayManager.apply_proxy_binding(vps_port, user, pwd, upstream_host, upstream_port, upstream_user, upstream_pwd)
+步骤 4: 配上线（对外 SS inbound + 上游 socks5 outbound, ADR-0011）
+   - XrayManager.apply_proxy_binding(vps_port, proxy_outbound, method, password)
+       （内部走 add_proxy_binding(protocol=shadowsocks); 对外是 SS, 上游 outbound 仍 socks5）
    - toolbox.firewall.open_tcp_port_range(client, vps_port, vps_port)
    ↓
-步骤 5: 验证（两次 ping）
-   - 内 ping: toolbox.proxy_check.test_internal(client, vps_port, user, pwd)
+步骤 5: 验证（两套 SS ping, ADR-0011 §决策 §5）
+   - 内 ping: ShadowsocksProbe().test_internal(client, vps_port, method, password)
+   │     （VPS 本机起临时 xray 实例端到端验 SS 握手+加密+密码+上游出口, 测完清理临时实例）
    │   ├─ 不通 → 立刻 XrayManager.rollback_proxy_binding(vps_port, last_config)
    │   │       → 任务 failed + last_error_code='inner_ping_failed'
    │   │       → vps.stage 保持 running
    │   │       → 终态
    │   └─ 通  → 继续
-   - 外 ping: toolbox.proxy_check.test_external(vps_ip, vps_port, user, pwd)
+   - 外 ping: ShadowsocksProbe().test_external(vps_ip, vps_port)
+   │     （worker 本机 TCP 端口可达测, 不拉核心; 通 = 云厂商安全组放行了 SS 端口）
    │   ├─ 通  → status='using'
    │   └─ 不通 → status='pending_fw'
    ↓
@@ -144,22 +148,24 @@ vps_port = random.choice(list(available))  # 高位随机
 **成功路径**（内 ping 通）, 同事务一次写全:
 
 ```python
-# inbound 账密生成规则 (需求窗口拍板 2026-06-09, v1.1 写入 spec):
-#   inbound_user = f"proxy_{ip.id}"   (例 ip_id=42 → "proxy_42", 排障时一眼看出挂的哪条 IP)
-#   inbound_pwd  = uuid4().hex        (32 字符随机, 不可猜)
+# SS inbound 凭据生成规则 (ADR-0011 §决策 §2):
+#   SS 没有 username 概念 → inbound_user 留空 ""
+#   password = uuid4().hex            (32 字符随机, 不可猜; 落 inbound_pwd 加密槽)
+#   method   = config.SS_METHOD       (aes-256-gcm, 对外 SS 加密方式)
 
 with session_scope() as s:
-    # proxy_record: INSERT 新行
+    # proxy_record: INSERT 新行 (对外节点 = Shadowsocks)
     proxy = ProxyRecord.from_new_deployment(
         vps_id=vps.id,
         vps_port=vps_port,
         ip_id=ip.id,
-        inbound_user=f"proxy_{ip.id}",
-        inbound_pwd=uuid4().hex,
+        inbound_user="",                       # SS 无 user
+        inbound_pwd=password,                  # SS password (uuid4().hex)
         upstream_host=ip.entry_host,
         egress_ip=ip.egress_ip,
         egress_country=ip.country_code,
-        protocol='socks5',
+        protocol=ProxyProtocol.SHADOWSOCKS,
+        method=method,                         # config.SS_METHOD
     )
     proxy.status = ProxyStatus.USING if 外通 else ProxyStatus.PENDING_FW
     s.add(proxy)
@@ -220,9 +226,9 @@ with session_scope() as s:
 | 推算可用端口集 | 区间 - 已用 - 排除清单 = 可用集 | `toolbox/ports.py::compute_available_ports` | ✅ 已有 |
 | 常用端口排除清单 | well-known + 常见应用端口 frozen set | `toolbox/ports.py::COMMON_RESERVED_PORTS` | ✅ 已有（即 ADR-0006 §6 的 EXCLUDED_PORTS）|
 | 放行 TCP 端口（本地防火墙）| firewalld / ufw 加 inbound 规则 | `toolbox/firewall.py::open_tcp_port_range` | ✅ 已有（传 `(port,port)` 当单端口）|
-| 内 ping socks5 代理 | 在 VPS 本机走 localhost 测 inbound 通不通, 返 `(ok, egress_ip)` | `toolbox/proxy_check.py::test_internal` | ✅ 已有 |
-| 外 ping socks5 代理 | 从我们后端打 VPS_IP:port 测整链路 | `toolbox/proxy_check.py::test_external` | ✅ 已有 |
-| 加 xray 代理三件套 | inbound + outbound + 路由三件套一次加 | `xray/manager.py::XrayManager.apply_proxy_binding` | ✅ 已有 |
+| 内 ping SS 节点 | VPS 本机起临时 xray 端到端验 SS, 返 `(ok, egress_ip)` | `toolbox/proxy_check.py::ShadowsocksProbe.test_internal(client, port, method, password)` | ✅ 已有（T-28）|
+| 外 ping SS 节点 | worker 本机 TCP 端口可达测（SS 跑 TCP, 通=安全组放行）| `toolbox/proxy_check.py::ShadowsocksProbe.test_external(host, port)` | ✅ 已有（T-28）|
+| 加 xray 代理三件套（对外 SS）| inbound(SS) + outbound(上游 socks5) + 路由一次加 | `xray/manager.py::XrayManager.apply_proxy_binding(vps_port, outbound, method, password)` | ✅ 已有（T-27 改 SS）|
 | 回滚 xray 代理三件套 | 撤销刚加的 inbound + outbound + 路由 | `xray/manager.py::XrayManager.rollback_proxy_binding` | ✅ 已有 |
 
 ### B. 工具编排（工人内部私有, 不抽出来）
@@ -233,7 +239,7 @@ with session_scope() as s:
 |------|--------|------|
 | `_pick_vps()` | 挑一台 VPS, 同事务抢资源锁 | 走 §4 挑机 SQL + UPDATE stage + UPDATE task.vps_id |
 | `_pick_port(client, vps)` | 在 VPS 上挑高位随机端口 | 走 §5 端口算法 |
-| `_deploy_one_binding(...)` | 配上线 + 防火墙 + 内 ping + 外 ping | 走 §3 步骤 4-5 |
+| `_deploy_one_binding(...)` | 配上线（对外 SS）+ 防火墙 + 内 ping（SS）+ 外 ping（SS）| 走 §3 步骤 4-5 |
 | `_mark_done(...)` | 成功收尾（含 stage 释放）| 走 §6 |
 | `_mark_failed(error_code, error_msg)` | 失败收尾（stage 不释放）| 走 §7 |
 
@@ -262,3 +268,10 @@ with session_scope() as s:
 - v1 2026-06-09 初版（对应 ADR-0006 落地）
 - v1.1 2026-06-09 §6 inbound 账密生成规则敲定（user=f"proxy_{ip.id}", pwd=uuid4().hex），跟 T-16 实现 + TC 同 commit 落
 - v1.2 2026-06-10 §6 收尾伪代码去掉 `ip.status = IPStatus.USING` 两行（随 ADR-0010 / T-21 删 `ip_record.status` 字段;真相源改为 proxy_record 存在性）
+- v1.3 2026-06-24 对外协议 socks5 → Shadowsocks（随 ADR-0011 / T-27 落地）:
+  - §1 工人定位改"对外开 Shadowsocks 入口"（上游 outbound 仍 socks5 不动）
+  - §3 步骤 4 配上线改 `apply_proxy_binding(vps_port, outbound, method, password)`（内部 add_proxy_binding protocol=shadowsocks）
+  - §3 步骤 5 内/外 ping 改两套 SS 描述（内 ping 临时 xray 端到端 / 外 ping TCP 可达）
+  - §6 收尾凭据规则改 SS（inbound_user="" SS 无 user；password=uuid4().hex；method=config.SS_METHOD；protocol=ProxyProtocol.SHADOWSOCKS）
+  - §工具清单 A 内/外 ping 换 ShadowsocksProbe；apply_proxy_binding 标"改 SS"
+  - 方案 A 备注：`add_proxy_binding` 加 `protocol` 参数（默认 socks5），apply→SS / replace→socks5；IPProbeWorker 的 replace_proxy_binding 链行为零变化（仍 socks5 测上游）

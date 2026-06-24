@@ -30,6 +30,7 @@ from ._helpers import (
     insert_ip_task,
     insert_vps,
     make_fake_session_scope,
+    make_fake_ss_probe_cls,
     make_fake_vps_session_cls,
     make_in_memory_engine,
 )
@@ -86,10 +87,8 @@ class TestLockStateInvariant(unittest.TestCase):
             patches = _base_patches(Session, fake_xm) + [
                 patch("workers.proxy_deploy_worker.firewall.open_tcp_port_range",
                       return_value="firewalld"),
-                patch("workers.proxy_deploy_worker.test_internal",
-                      return_value=(True, "1.1.1.1")),
-                patch("workers.proxy_deploy_worker.test_external",
-                      return_value=True),
+                patch("workers.proxy_deploy_worker.ShadowsocksProbe",
+                      make_fake_ss_probe_cls(inner_ok=True, outer_ok=True)),
             ]
             self._run_with_patches(patches, task_id)
             with Session() as s:
@@ -108,10 +107,8 @@ class TestLockStateInvariant(unittest.TestCase):
             patches = _base_patches(Session, fake_xm) + [
                 patch("workers.proxy_deploy_worker.firewall.open_tcp_port_range",
                       return_value="firewalld"),
-                patch("workers.proxy_deploy_worker.test_internal",
-                      return_value=(False, "")),
-                patch("workers.proxy_deploy_worker.test_external",
-                      return_value=True),
+                patch("workers.proxy_deploy_worker.ShadowsocksProbe",
+                      make_fake_ss_probe_cls(inner_ok=False, inner_egress="", outer_ok=True)),
             ]
             self._run_with_patches(patches, task_id)
             with Session() as s:
@@ -130,10 +127,8 @@ class TestLockStateInvariant(unittest.TestCase):
             patches = _base_patches(Session, fake_xm) + [
                 patch("workers.proxy_deploy_worker.firewall.open_tcp_port_range",
                       return_value="firewalld"),
-                patch("workers.proxy_deploy_worker.test_internal",
-                      return_value=(True, "")),
-                patch("workers.proxy_deploy_worker.test_external",
-                      return_value=True),
+                patch("workers.proxy_deploy_worker.ShadowsocksProbe",
+                      make_fake_ss_probe_cls(inner_ok=True, outer_ok=True)),
             ]
             self._run_with_patches(patches, task_id)
             with Session() as s:
@@ -152,10 +147,8 @@ class TestLockStateInvariant(unittest.TestCase):
             patches = _base_patches(Session, fake_xm) + [
                 patch("workers.proxy_deploy_worker.firewall.open_tcp_port_range",
                       side_effect=FirewallOpenError("x")),
-                patch("workers.proxy_deploy_worker.test_internal",
-                      return_value=(True, "")),
-                patch("workers.proxy_deploy_worker.test_external",
-                      return_value=True),
+                patch("workers.proxy_deploy_worker.ShadowsocksProbe",
+                      make_fake_ss_probe_cls(inner_ok=True, outer_ok=True)),
             ]
             self._run_with_patches(patches, task_id)
             with Session() as s:

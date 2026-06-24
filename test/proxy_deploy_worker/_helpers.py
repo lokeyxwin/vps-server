@@ -66,6 +66,33 @@ def make_fake_session_scope(Session):
     return _fake_scope
 
 
+def make_fake_ss_probe_cls(
+    *,
+    inner_ok: bool = True,
+    inner_egress: str = "203.0.113.42",
+    outer_ok: bool = True,
+):
+    """返回伪 ShadowsocksProbe 类 (ADR-0011 SS 内/外 ping)。
+
+    实例的 test_internal(client, port, method, password) → (inner_ok, inner_egress);
+    test_external(host, port) → outer_ok。
+    用 MagicMock 包住方法, 方便 TC 断言调用参数 (method/password 透传等)。
+    """
+
+    class _FakeSSProbe:
+        def __init__(self):
+            self.test_internal = MagicMock(
+                name="ss_test_internal",
+                return_value=(inner_ok, inner_egress),
+            )
+            self.test_external = MagicMock(
+                name="ss_test_external",
+                return_value=outer_ok,
+            )
+
+    return _FakeSSProbe
+
+
 def make_fake_vps_session_cls(client=None):
     """返回伪 VPSSession 类, 模拟 with 上下文 + client 属性."""
     fake_client = client or MagicMock(name="fake_paramiko_client")

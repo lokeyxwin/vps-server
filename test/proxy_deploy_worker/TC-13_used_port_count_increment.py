@@ -26,6 +26,7 @@ from ._helpers import (
     insert_ip_task,
     insert_vps,
     make_fake_session_scope,
+    make_fake_ss_probe_cls,
     make_fake_vps_session_cls,
     make_in_memory_engine,
 )
@@ -53,9 +54,12 @@ def _run_once(Session, *, inner_ok: bool, outer_ok: bool):
         patch("workers.proxy_deploy_worker.get_used_ports", return_value=set()),
         patch("workers.proxy_deploy_worker.firewall.open_tcp_port_range",
               return_value="firewalld"),
-        patch("workers.proxy_deploy_worker.test_internal",
-              return_value=(inner_ok, "1.1.1.1" if inner_ok else "")),
-        patch("workers.proxy_deploy_worker.test_external", return_value=outer_ok),
+        patch("workers.proxy_deploy_worker.ShadowsocksProbe",
+              make_fake_ss_probe_cls(
+                  inner_ok=inner_ok,
+                  inner_egress="1.1.1.1" if inner_ok else "",
+                  outer_ok=outer_ok,
+              )),
     ]
     for p in patches:
         p.start()
