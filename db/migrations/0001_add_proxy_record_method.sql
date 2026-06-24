@@ -1,0 +1,1 @@
+ALTER TABLE proxy_record ADD COLUMN method VARCHAR(32) NOT NULL DEFAULT '';

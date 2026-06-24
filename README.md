@@ -181,9 +181,9 @@ PROBE_VPS_1_PWD=
 # 跑测试确认环境 OK
 PYTHONPATH=. VPS_SERVER_TESTING=1 uv run pytest -q
 
-# ① 建 DB 表
+# ① 建 DB 表 (全新库: 建最新 schema + baseline 现有迁移)
 PYTHONPATH=. uv run python main.py init-db
-# 看到 "init-db 完成: N 张表已就绪" 算成功
+# 看到 "init-db 完成: fresh=True, N 张表就绪, baseline 迁移=[...]" 算成功
 
 # ② 装测试 VPS (xray 装 + 起 + 留 inbound 19000, 幂等)
 PYTHONPATH=. uv run python main.py init-probe-vps
@@ -194,6 +194,29 @@ PYTHONPATH=. uv run python main.py init-probe-vps
 - 加新 ORM 表 → 重跑 `init-db`(已有表不动,只补新表)
 - 换测试 VPS / 测试机 xray 挂了 → 重跑 `init-probe-vps`
 - agent 查询时看到 `probe_vps_not_ready` → 重跑 `init-probe-vps`
+
+#### 升级已有生产库 — 拉新代码后跑 `migrate`(ADR-0012)
+
+`init-db` 只负责**全新库**:它对已有库幂等建表,但**绝不**给已有的表加字段。
+生产库有数据不能 drop,加字段(如 ADR-0011 给 `proxy_record` 加 `method` 列)走
+**轻量迁移**:
+
+```bash
+# 拉了带 schema 变更的新代码后, 在生产库上跑一次
+PYTHONPATH=. uv run python main.py migrate
+# 打印 applied: ['0001'] / skipped: [...]; 已应用过则 applied 为空 (no-op)
+```
+
+工作机制:
+- 迁移文件住 `db/migrations/NNNN_<slug>.sql`(纯 SQL,编号递增)
+- 台账表 `schema_migrations` 记"哪些迁移跑过了",只跑未应用的
+- 幂等:连跑两次第二次 `applied` 为空
+- 防御:某列已被手工 ALTER 加过(无台账)→ migrate 检测到列已存在,只记台账不重复执行,
+  不会 `duplicate column`
+
+**部署口诀**:
+- **首次部署 / 全新库** → `init-db`(建最新 schema + baseline)
+- **已有库 + 拉了 schema 变更的新代码** → `migrate`(增量演化)→ 再起 `worker-loop`
 
 **⚠️ 关于 SSH 用户权限**(T-19 真机验证经验):
 
@@ -235,7 +258,7 @@ sudo systemctl restart ssh
 ```bash
 # 看子命令
 PYTHONPATH=. uv run python main.py --help
-# 应看到: init-db / init-probe-vps / worker-loop 三个子命令
+# 应看到: init-db / migrate / init-probe-vps / worker-loop 四个子命令
 
 # 起 worker-loop (前台跑, Ctrl+C 退)
 PYTHONPATH=. uv run python main.py worker-loop

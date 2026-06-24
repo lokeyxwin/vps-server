@@ -38,18 +38,19 @@ def test_registered_in_all_tools():
 
 
 def test_handler_success_returns_ok_with_tables():
-    """handler 跑 create_all 成功 → {"status":"ok","tables":[...]}"""
-    # 不实际跑 create_all (避免动磁盘), mock 它
-    with patch("db.base.Base") as mock_base:
-        mock_engine = object()
-        mock_base.metadata.tables = {"vps_record": None, "ip_record": None}
+    """handler 调 init_db_with_baseline_if_fresh 成功 → {"status":"ok","tables":[...]}.
 
-        with patch.dict(
-            "sys.modules",
-            {"db.engine": type("M", (), {"engine": mock_engine})()},
-        ):
-            with patch.object(mock_base.metadata, "create_all"):
-                out = asyncio.run(handler({}))
+    ADR-0012: handler 改走共享 helper, 这里只测协议适配 + 兜底,
+    mock helper 源头 (db.migrate.init_db_with_baseline_if_fresh), helper 内部逻辑归 test/migrate/.
+    """
+    fake_result = {
+        "status": "ok",
+        "fresh": True,
+        "tables": ["vps_record", "ip_record"],
+        "baselined": ["0001"],
+    }
+    with patch("db.migrate.init_db_with_baseline_if_fresh", return_value=fake_result):
+        out = asyncio.run(handler({}))
 
     assert len(out) == 1
     assert isinstance(out[0], TextContent)
@@ -59,9 +60,11 @@ def test_handler_success_returns_ok_with_tables():
 
 
 def test_handler_failure_returns_failed_with_message():
-    """create_all 抛 → handler 兜底 {"status":"failed","message":...}"""
-    with patch("db.base.Base") as mock_base:
-        mock_base.metadata.create_all.side_effect = RuntimeError("db down")
+    """helper 抛 → handler 兜底 {"status":"failed","message":...}"""
+    with patch(
+        "db.migrate.init_db_with_baseline_if_fresh",
+        side_effect=RuntimeError("db down"),
+    ):
         out = asyncio.run(handler({}))
 
     result = json.loads(out[0].text)
@@ -72,9 +75,8 @@ def test_handler_failure_returns_failed_with_message():
 
 def test_handler_accepts_none_arguments():
     """arguments=None 也能正常跑 (没必填参数)."""
-    with patch("db.base.Base") as mock_base:
-        mock_base.metadata.tables = {}
-        mock_base.metadata.create_all.return_value = None
+    fake_result = {"status": "ok", "fresh": False, "tables": [], "baselined": []}
+    with patch("db.migrate.init_db_with_baseline_if_fresh", return_value=fake_result):
         out = asyncio.run(handler(None))
     result = json.loads(out[0].text)
     assert result["status"] == "ok"

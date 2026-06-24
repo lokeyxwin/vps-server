@@ -75,19 +75,35 @@ PYTHONPATH=. uv run pytest test/ -q   # 全量(确认没破坏 + 新 TC 全过)
 ```
 
 ### 实现者完工标准
-- [ ] 开工改 doing
-- [ ] db/migrate.py + 0001.sql + main.py migrate + init-db helper + tools/init_db.py + README 改完
-- [ ] 验收矩阵 6 条都有 TC 且全 PASS
-- [ ] **没碰 CLAUDE.local.md**(需求窗口收口)
-- [ ] 完成记录已填(测试结果原样)
-- [ ] 保持 doing_30, 不 commit
+- [x] 开工改 doing
+- [x] db/migrate.py + 0001.sql + main.py migrate + init-db helper + tools/init_db.py + README 改完
+- [x] 验收矩阵 6 条都有 TC 且全 PASS(test/migrate/ 21 TC + test/mcp_tools parity)
+- [x] **没碰 CLAUDE.local.md**(需求窗口收口)
+- [x] 完成记录已填(测试结果原样)
+- [x] 保持 doing_30, 不 commit
 
 ---
 
 ## 完成记录(done 时追加)
 ```text
-完成日期 / commit:
+完成日期: 2026-06-24
 改动摘要:
+  - db/migrate.py 新建: apply_pending(扫 migrations + 0001 schema probe + stamp 台账)
+    + init_db_with_baseline_if_fresh(全新库 create_all+baseline / 已有库绝不 stamp)
+  - db/migrations/0001_add_proxy_record_method.sql 新建(ALTER ADD COLUMN method)
+  - main.py: 加 migrate 子命令 + _init_db 改调共享 helper + _migrate 异常兜底(return 1)
+  - tools/init_db.py: 改调共享 helper(跟 CLI 一致, 修了 TC-10 旧 mock 回归)
+  - README.md: 部署章节加 migrate 步骤
+  - test/migrate/ TC-01~04(21 TC, 验收矩阵 6 维) + test/mcp_tools/TC-10 更新
+  需求窗口接管收尾(实现 agent 输出反复截断不可靠):
+  - TC-10 mock 回归修复(旧 db.base.Base mock → mock helper 源头)
+  - MEDIUM-1 _migrate 异常兜底 + TC(code-reviewer adversarial 发现)
+  - LOW-3 迁移文件"每文件一条语句"约定写进 db/migrate.py docstring
 测试命令 / 结果:
+  PYTHONPATH=. uv run pytest test/ -q → 423 passed, 3 skipped(真机默认 skip) in 4.34s
+  code-reviewer adversarial: 0 CRITICAL / 0 HIGH / 1 MEDIUM(已修) / 4 LOW
 未覆盖风险:
+  - LOW-1 SQLite DDL 非原子(ALTER 自动提交), 但 0001 probe 重试自愈
+  - LOW-2 _column_exists f-string 拼表名(table 来自硬编码字典, 无注入风险)
+  - runner 是 SQLite 专用(PRAGMA/sqlite_master), 符合 ADR-0010 生产 SQLite
 ```

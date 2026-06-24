@@ -5,7 +5,8 @@
   main.py worker-loop  后端常驻     扫 task 表 + 推异步段 worker
 
 用法:
-  uv run python main.py init-db                       # 首次部署: 建好所有表 (幂等)
+  uv run python main.py init-db                       # 首次部署: 建好所有表 (全新库 baseline)
+  uv run python main.py migrate                       # 已有库: 跑未应用的迁移 (生产演化)
   uv run python main.py init-probe-vps [--slot N]     # 装好测试 VPS (xray 装+起+inbound 幂等)
   uv run python main.py worker-loop                   # 启动后端 worker 调度循环
 
@@ -13,10 +14,15 @@ worker-loop 只调度异步段 worker (XrayWorker / ProxyDeployWorker).
 SSHWorker / IPProbeWorker 是 MCP 入口工具的同步段, 由 register_vps /
 register_ip handler 直接调 process(), 不进 loop.
 
-init-db 说明:
-  - 跑 Base.metadata.create_all(engine), CREATE TABLE IF NOT EXISTS 幂等
-  - SQLite / MySQL 都生效, 只建表不演化 (后续加字段走迁移)
-  - dev SQLite 改 schema: 手动 DROP TABLE 再跑 init-db
+init-db 说明 (ADR-0012):
+  - 全新库 (业务表都不存在) → create_all 含最新 schema + baseline (现有迁移全 stamp)
+  - 已有库 → create_all 幂等 (不动旧表) + 绝不 stamp 迁移 (留给 migrate 演化)
+  - dev SQLite 重建 schema: 手动 DROP TABLE 再跑 init-db
+
+migrate 说明 (ADR-0012):
+  - 扫 db/migrations/*.sql 按号跑未应用的, 记 schema_migrations 台账
+  - 生产库有数据不能 drop, 靠这套增量演化 (如 0001 给 proxy_record 加 method 列)
+  - 幂等: 连跑两次第二次 no-op
 
 init-probe-vps 说明 (ADR-0009):
   - 跑 probe_vps.bootstrap.ensure_ready, 幂等装好测试 VPS xray 基础设施
@@ -90,22 +96,46 @@ def _run_worker_loop() -> int:
 
 
 def _init_db() -> int:
-    """跑 Base.metadata.create_all(engine), 建好所有表 (幂等).
+    """全新库 create_all + baseline; 已有库幂等不 stamp (ADR-0012, CLI/MCP 共享 helper).
 
-    依赖 db.models 里所有 ORM 类都已 import 注册到 Base.metadata. 实际靠
-    db/__init__.py 顶部 import models 完成.
+    走 db.migrate.init_db_with_baseline_if_fresh, 跟 tools/init_db.py 同一套逻辑.
     """
-    import db  # noqa: F401 — 触发 db/__init__.py 注册所有 ORM 表
-    from db.base import Base
     from db.engine import engine
+    from db.migrate import init_db_with_baseline_if_fresh
 
+    logger.info("init-db 启动: db_url=%s", engine.url)
+    result = init_db_with_baseline_if_fresh(engine)
     logger.info(
-        "init-db 启动: db_url=%s, tables=%s",
-        engine.url,
-        sorted(Base.metadata.tables.keys()),
+        "init-db 完成: fresh=%s, %d 张表就绪, baseline 迁移=%s",
+        result["fresh"], len(result["tables"]), result["baselined"],
     )
-    Base.metadata.create_all(engine)
-    logger.info("init-db 完成: %d 张表已就绪", len(Base.metadata.tables))
+    return 0
+
+
+def _migrate() -> int:
+    """跑未应用的迁移 (ADR-0012). 打印 applied / skipped 结果.
+
+    apply_pending 抛错(DB 被锁 / 权限不足 / SQL 失败)时兜底转 logger.error + 返回 1,
+    给运维一句可读提示而非 raw stacktrace(跟 MCP init_db handler 的健壮性对齐)。
+    """
+    from db.engine import engine
+    from db.migrate import apply_pending
+
+    logger.info("migrate 启动: db_url=%s", engine.url)
+    try:
+        result = apply_pending(engine)
+    except Exception as exc:  # noqa: BLE001 — 运维命令兜底转友好提示
+        logger.error("migrate 失败: %s: %s", type(exc).__name__, exc)
+        print(f"migrate failed: {type(exc).__name__}: {exc}")
+        return 1
+    applied = result["applied"]
+    skipped = result["skipped"]
+    if applied:
+        logger.info("migrate 完成: 本次应用 %d 个迁移 → %s", len(applied), applied)
+    else:
+        logger.info("migrate 完成: 无待应用迁移 (no-op)")
+    print(f"applied: {applied}")
+    print(f"skipped: {skipped}")
     return 0
 
 
@@ -156,7 +186,11 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="action", required=True, metavar="ACTION")
     subparsers.add_parser(
         "init-db",
-        help="建好所有表 (幂等, 首次部署或加新表时跑一次)",
+        help="建好所有表 (全新库 baseline / 已有库幂等, 首次部署跑一次)",
+    )
+    subparsers.add_parser(
+        "migrate",
+        help="跑未应用的迁移 (已有库演化, 拉新代码后跑一次)",
     )
     init_probe_parser = subparsers.add_parser(
         "init-probe-vps",
@@ -177,6 +211,8 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     if args.action == "init-db":
         return _init_db()
+    if args.action == "migrate":
+        return _migrate()
     if args.action == "init-probe-vps":
         return _init_probe_vps(slot=args.slot)
     if args.action == "worker-loop":

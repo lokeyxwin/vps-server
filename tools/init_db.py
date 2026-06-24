@@ -7,7 +7,7 @@
 谁调我:
   - admin MCP 客户端 (运维 / agent 主动调).
 
-业务规约金标准: ADR-0008 §决策 §2 + ADR-0009 §决策 §6.2 + main.py::_init_db.
+业务规约金标准: ADR-0008 §决策 §2 + ADR-0009 §决策 §6.2 + ADR-0012 §4 + main.py::_init_db.
 """
 
 from __future__ import annotations
@@ -21,22 +21,23 @@ TOOL = Tool(
     name="init_db",
     title="初始化 DB schema (建表)",
     description=(
-        "幂等建好所有业务表 (CREATE TABLE IF NOT EXISTS, SQLite/MySQL 都生效). "
-        "典型场景: 首次部署 / 引入新表后. 不演化老表 (加字段/改类型仍需手动 "
-        "ALTER 或 alembic).\n"
+        "首次部署建好所有业务表. 全新库 (业务表都不存在) 建最新 schema 并 baseline "
+        "(把现有迁移全部标记已应用); 已有库则幂等建表, 绝不改动旧表也不标记迁移. "
+        "跟 CLI 'main.py init-db' 走同一套逻辑.\n"
         "\n"
         "典型场景:\n"
-        "- 用户首次部署后调一次, 把空 DB 建好所有业务表.\n"
+        "- 用户首次部署后调一次, 把空 DB 建好所有业务表 (含最新字段).\n"
         "- 改 db/models.py 加了新 ORM 类后调一次, 新表自动建出来.\n"
         "\n"
         "返回 status 含义 (照此转告用户):\n"
-        "- ok + tables: <表清单>: 已就绪; 告诉用户 '所有业务表已建好'.\n"
+        "- ok + fresh + tables: <表清单>: 已就绪; fresh=true 表示全新库, "
+        "  false 表示已有库幂等建表.\n"
         "- failed + message: 详细原因 (DB 连不上 / 权限不足等); "
         "  把 message 转告用户.\n"
         "\n"
         "反例:\n"
         "- 不要把它当 '重置 DB' 用 — 它不会 DROP 任何东西.\n"
-        "- 加字段时跑它没用 (不会改老表, 需手动 ALTER 或迁移工具).\n"
+        "- 给已有库加字段不要用它 (它不演化旧表); 加字段要跑 'main.py migrate'.\n"
         "- 这是高危管理动作 (改 DB schema), 不要随便调."
     ),
     inputSchema={
@@ -57,19 +58,15 @@ TOOL = Tool(
 async def handler(arguments: dict | None) -> list[TextContent]:
     """MCP tools/call 入口.
 
-    跑 Base.metadata.create_all(engine). 成功返 {"status": "ok", "tables": [...]};
+    走 db.migrate.init_db_with_baseline_if_fresh (跟 CLI init-db 同一套 helper).
+    成功返 {"status": "ok", "fresh": bool, "tables": [...], "baselined": [...]};
     任意异常 catch 转 {"status": "failed", "message": str(exc)}.
     """
     try:
-        import db  # noqa: F401 — 触发 db/__init__.py 注册所有 ORM 表
-        from db.base import Base
         from db.engine import engine
+        from db.migrate import init_db_with_baseline_if_fresh
 
-        Base.metadata.create_all(engine)
-        result = {
-            "status": "ok",
-            "tables": sorted(Base.metadata.tables.keys()),
-        }
+        result = init_db_with_baseline_if_fresh(engine)
     except Exception as exc:  # noqa: BLE001 — admin 工具兜底转 status
         result = {
             "status": "failed",
