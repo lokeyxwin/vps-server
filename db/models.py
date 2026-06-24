@@ -153,6 +153,20 @@ class ProxyStatus:
     INACTIVE    = "inactive"
 
 
+class ProxyProtocol:
+    """对外客户端 inbound 协议常量（ADR-0011 §决策 §3）。
+
+    跟 ProxyStatus 同款常量类风格（非 Enum）。
+
+    业务含义:
+      SOCKS5      = 旧节点 / 纳管存量
+      SHADOWSOCKS = 新部署默认（ADR-0011：跨客户端 SIP002 ss:// 标准分享）
+    """
+
+    SOCKS5      = "socks5"        # 旧节点 / 纳管存量
+    SHADOWSOCKS = "shadowsocks"   # 新部署默认（ADR-0011）
+
+
 class ProxyRecord(Base):
     """VPS 端口绑定记录（事实表）。
 
@@ -192,8 +206,12 @@ class ProxyRecord(Base):
     )
 
     # ---------- 客户端连接侧（VPS_IP:vps_port 用什么协议/账密接入）----------
-    # 一般是 'socks5'；将来如果要给客户端用 http 也支持
-    protocol: Mapped[str] = mapped_column(String(16), default="socks5", nullable=False)
+    # 取值见 ProxyProtocol 常量类（socks5 旧节点/纳管存量 / shadowsocks 新部署默认）
+    protocol: Mapped[str] = mapped_column(
+        String(16), default=ProxyProtocol.SOCKS5, nullable=False
+    )
+    # SS 加密方式（如 aes-256-gcm）；socks5 节点留空（ADR-0011 §决策 §3）
+    method: Mapped[str] = mapped_column(String(32), default="", nullable=False)
     inbound_user: Mapped[str] = mapped_column(String(128), default="", nullable=False)
     inbound_pwd_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
 
@@ -249,7 +267,7 @@ class ProxyRecord(Base):
             vps_id=vps_id,
             vps_port=binding["port"],
             ip_id=None,
-            protocol=binding.get("protocol", "socks5"),
+            protocol=binding.get("protocol", ProxyProtocol.SOCKS5),
             inbound_user=binding.get("inbound_user", ""),
             inbound_pwd_encrypted=encrypt_password(binding.get("inbound_pwd", "")),
             upstream_host=binding.get("upstream_host", ""),
@@ -269,7 +287,8 @@ class ProxyRecord(Base):
         upstream_host: str,
         egress_ip: str,
         egress_country: str = "",
-        protocol: str = "socks5",
+        protocol: str = ProxyProtocol.SOCKS5,
+        method: str = "",
     ) -> "ProxyRecord":
         """rgIP 业务部署新 binding 时构造 ORM 记录。
 
@@ -277,6 +296,9 @@ class ProxyRecord(Base):
         - ip_id 必填（业务持有 IPRecord.id）
         - 入参显式而非 dict（业务清楚自己手里有啥）
         - inbound_pwd 在这里加密
+
+        protocol 取 ProxyProtocol 常量；method 是 SS 加密方式
+        （shadowsocks 节点必填，socks5 节点留空，ADR-0011 §决策 §3）。
         """
         from toolbox.security import encrypt_password
         return cls(
@@ -284,6 +306,7 @@ class ProxyRecord(Base):
             vps_port=vps_port,
             ip_id=ip_id,
             protocol=protocol,
+            method=method,
             inbound_user=inbound_user,
             inbound_pwd_encrypted=encrypt_password(inbound_pwd),
             upstream_host=upstream_host,
