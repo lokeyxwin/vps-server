@@ -104,6 +104,6 @@ PYTHONPATH=. uv run pytest test/ -q   # 全量(确认没破坏 + 新 TC 全过)
   code-reviewer adversarial: 0 CRITICAL / 0 HIGH / 1 MEDIUM(已修) / 4 LOW
 未覆盖风险:
   - LOW-1 SQLite DDL 非原子(ALTER 自动提交), 但 0001 probe 重试自愈
-  - runner 已改 SQLAlchemy inspect 跨库(sqlite+mysql, ADR-0012 §补充, review 揪出);
-    MySQL 真验等生产环境(dev 无 MySQL, 跨库靠 SQLAlchemy inspect 抽象保证)
+  - runner 做了代码级跨库修复(inspect 替 PRAGMA/sqlite_master + _stamp 去 INSERT OR IGNORE);
+    生产=MySQL 但全程 SQLite 测, **MySQL 兼容待 T-32 真库验证**(生产上线 gate), 未真验前不算 MySQL 闭环
 ```

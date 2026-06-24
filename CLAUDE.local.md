@@ -256,8 +256,9 @@ xxx_status_message: str       # 人类可读的状态附加信息
 有轻量 runner（`db/migrate.py` + `db/migrations/NNNN_*.sql` + schema_migrations 台账）。
 - 加字段/改结构 = 改 `db/models.py` + 加一个 `db/migrations/NNNN_<slug>.sql`（每文件一条语句）
 - 全新库（首次部署 / dev 重建）：`python main.py init-db`（create_all 最新 schema + baseline 现有迁移）
-- 已有库（生产，有数据）：`python main.py migrate`（跑未应用迁移，保数据演化）
+- 已有库（生产=MySQL，有数据）：`python main.py migrate`（跑未应用迁移，保数据演化）
 - dev 想重置：删本地 dev SQLite 文件 + `init-db`；生产只跑 `migrate`
+- ⚠️ runner 做了代码级跨库(sqlite/mysql)但 **MySQL 待 T-32 真验**；生产 migrate 是 gate（T-32 通过 + 备份副本先验，才跑生产库）
 
 ---
 

@@ -131,10 +131,14 @@ grep 证实活跃码零 import(只 services 内部互引)。`ip_register` 的旧
 review 指出 `db/engine.py` + `config.py` **预留 MySQL**(生产, 注释"生产改 mysql"), runner
 不该 SQLite 专用(切 MySQL 时 sqlite_master/PRAGMA 会炸)。
 
-**修正**: `_table_exists` / `_column_exists` 改用 SQLAlchemy `inspect`(has_table /
-get_columns)**跨库 API**, runner 同时支持 sqlite + mysql。0001 的 ALTER ADD COLUMN SQL
-本身跨库兼容, 不改。(切 MySQL 另需装 pymysql + 改 `DB_TYPE`, 属部署关注点。
-ADR-0010 "生产 SQLite" 与 config 注释 "生产 mysql" 的矛盾待用户后续澄清。)
+**修正(代码级跨库, MySQL 待 T-32 真验)**:
+- `_table_exists` / `_column_exists` 改用 SQLAlchemy `inspect`(has_table / get_columns)替 sqlite_master/PRAGMA
+- `_stamp` 去 SQLite 专用 `INSERT OR IGNORE` 改标准 check-then-insert
+- 0001 的 ALTER ADD COLUMN 本身跨库兼容, 不改
+
+⚠️ **生产 = MySQL**(用户 2026-06-24 确认), 但以上**只在 SQLite 全量验过**。
+runner **设计为跨库, MySQL 兼容待 T-32 真库验证** —— 未真验前不写"已支持 MySQL"。
+pymysql 已补进 pyproject。**生产 migrate 是显式 gate: T-32 通过后才跑(且先用备份副本验)**。
 
 ## 影响清单(已读代码现状, 已锁定)
 
