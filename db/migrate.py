@@ -74,12 +74,19 @@ def _applied_versions(engine: Engine) -> set[str]:
 
 
 def _stamp(conn, version: str) -> None:
-    """在当前事务连接上把 version 记入台账 (幂等: 已存在则跳过)。"""
+    """在当前事务连接上把 version 记入台账 (幂等: 已存在则跳过)。
+
+    跨库写法(sqlite/mysql): 先查再插, 不用 SQLite 专用的 `INSERT OR IGNORE`
+    (MySQL 不认该语法)。migrate 非并发(部署一次性), check-then-insert 足够。
+    """
+    exists = conn.execute(
+        text("SELECT 1 FROM schema_migrations WHERE version = :v"),
+        {"v": version},
+    ).fetchone()
+    if exists is not None:
+        return
     conn.execute(
-        text(
-            "INSERT OR IGNORE INTO schema_migrations (version, applied_at) "
-            "VALUES (:v, :t)"
-        ),
+        text("INSERT INTO schema_migrations (version, applied_at) VALUES (:v, :t)"),
         {"v": version, "t": _now_iso()},
     )
 
